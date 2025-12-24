@@ -5,9 +5,14 @@ from pathlib import Path
 
 
 def downscale_to_1080p24(input_path: str, output_path: str = None, duration: float = None):
+    input_p = Path(input_path)
+
     if output_path is None:
-        p = Path(input_path)
-        output_path = f"{p.stem}_1080p{p.suffix}"
+        cached = Path("samples/1080p24fps") / f"{input_p.stem}_1080p{input_p.suffix}"
+        if cached.exists() and duration is None:
+            return str(cached)
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        output_path = str(cached)
 
     cmd = ["ffmpeg", "-y", "-i", input_path]
 
