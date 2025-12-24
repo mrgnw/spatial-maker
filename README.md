@@ -2,6 +2,49 @@
 
 Convert 2D videos to stereoscopic 3D spatial videos for viewing on VR headsets (Apple Vision Pro / Meta Quest) using local, on-device processing with Apple Silicon Metal acceleration.
 
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/yourname/spatial-maker.git
+cd spatial-maker
+
+# Install with uv (recommended)
+uv sync
+
+# Or install globally as a tool
+uv tool install .
+```
+
+### Requirements
+
+- Python 3.10+
+- macOS with Apple Silicon (for Metal acceleration)
+- [ffmpeg](https://ffmpeg.org/) with VideoToolbox support
+- [spatial CLI](https://blog.mikeswanson.com/spatial_docs/) for MV-HEVC output
+
+```bash
+# Install ffmpeg and spatial CLI
+brew install ffmpeg spatial
+```
+
+### Model Checkpoints
+
+Download Depth Anything V2 checkpoints to `checkpoints/`:
+
+```bash
+mkdir -p checkpoints
+# Small (fastest, 24.8M params)
+curl -L -o checkpoints/depth_anything_v2_vits.pth \
+  https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth
+# Base (balanced, 97.5M params)
+curl -L -o checkpoints/depth_anything_v2_vitb.pth \
+  https://huggingface.co/depth-anything/Depth-Anything-V2-Base/resolve/main/depth_anything_v2_vitb.pth
+# Large (best quality, 335.3M params)
+curl -L -o checkpoints/depth_anything_v2_vitl.pth \
+  https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vitl.pth
+```
+
 ## Pipeline Overview
 
 ```
@@ -20,60 +63,47 @@ MV-HEVC Spatial Video (Vision Pro/Quest compatible)
 
 ## Quick Start
 
-### Basic Usage
+### Single File
 
 ```bash
-# Run the full pipeline
-python pipeline.py input_video.mp4
+# Using the CLI (if installed globally)
+spatial-maker video.mp4
+
+# Or with uv run
+uv run spatial-maker video.mp4
 
 # Specify output path
-python pipeline.py input_video.mp4 -o output_spatial.mov
+spatial-maker video.mp4 -o output_spatial.mov
+```
+
+### Batch Processing (Folder)
+
+```bash
+# Process all videos in a folder
+spatial-maker /path/to/videos/
+
+# Output goes to /path/to/videos/spatial/
+# Supports: .mp4, .mov, .avi, .mkv, .m4v, .webm, .wmv, .flv
 ```
 
 ### Options
 
 ```bash
 # Use a larger depth model for better quality (vits, vitb, vitl)
-python pipeline.py input_video.mp4 --encoder vitl
+spatial-maker video.mp4 --encoder vitl
 
 # Adjust 3D intensity (20-50 recommended for 1080p)
-python pipeline.py input_video.mp4 --max-disparity 40
+spatial-maker video.mp4 --max-disparity 40
 
 # Process only the first 10 seconds (useful for testing)
-python pipeline.py input_video.mp4 --duration 10
+spatial-maker video.mp4 --duration 10
 
 # Keep intermediate files for debugging
-python pipeline.py input_video.mp4 --keep-intermediate
+spatial-maker video.mp4 --keep-intermediate
 
 # Skip downscaling if input is already 1080p @ 24fps
-python pipeline.py input_video.mp4 --skip-downscale
+spatial-maker video.mp4 --skip-downscale
 ```
-
-## Requirements
-
-### Dependencies
-
-```bash
-# Install Python dependencies
-uv sync
-```
-
-### External Tools
-
-- **ffmpeg** with VideoToolbox support (for hardware-accelerated encoding)
-- **[spatial CLI](https://blog.mikeswanson.com/spatial_docs/)** for MV-HEVC spatial video creation
-
-Install spatial CLI:
-```bash
-brew install spatial
-```
-
-### Depth Model Checkpoints
-
-Download Depth Anything V2 checkpoints to `Depth-Anything-V2/checkpoints/`:
-- `depth_anything_v2_vits.pth` (small, fastest)
-- `depth_anything_v2_vitb.pth` (base, balanced)
-- `depth_anything_v2_vitl.pth` (large, best quality)
 
 ## Individual Scripts
 
@@ -125,7 +155,7 @@ python scripts/downscale_video.py input.mp4 output_1080p.mp4
 
 ```
 spatial-maker/
-├── pipeline.py              # End-to-end conversion pipeline
+├── pipeline.py              # End-to-end conversion pipeline (CLI entry point)
 ├── depth_estimators/
 │   ├── depth_anything_v2.py # Depth Anything V2 implementation
 │   └── apple_depth_pro.py   # Apple Depth Pro implementation
@@ -133,8 +163,7 @@ spatial-maker/
 │   ├── stereo_converter.py  # SBS stereoscopic conversion
 │   ├── downscale_video.py   # Video downscaling utility
 │   └── stitch_video.py      # Frame stitching utility
-├── Depth-Anything-V2/       # Depth Anything V2 submodule
-│   └── checkpoints/         # Model checkpoints
+├── checkpoints/             # Model checkpoints (download separately)
 ├── samples/                 # Sample videos
 └── output/                  # Generated outputs
 ```
