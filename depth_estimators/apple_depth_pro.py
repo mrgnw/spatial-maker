@@ -3,6 +3,7 @@ import subprocess
 import os
 from pathlib import Path
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 import torch
 import depth_pro
 import numpy as np
@@ -32,7 +33,7 @@ class AppleDepthPro:
         else:
             self.device = torch.device("cpu")
 
-    def process_video(self, video_path: str, output_dir: str = "output", max_frames: int = 3):
+    def process_video(self, video_path: str, output_dir: str = "output", max_frames: int = 8):
         warmup_start = time.time()
         self.load_model()
         warmup_time = time.time() - warmup_start
@@ -81,10 +82,13 @@ class AppleDepthPro:
                 Image.fromarray(depth_normalized).save(output)
 
             total_time = sum(frame_times)
+            avg_time = total_time / len(frame_times)
+            fps = 1 / avg_time if avg_time > 0 else 0
             return {
                 "frames_processed": len(frame_times),
                 "total_time": total_time,
-                "avg_time_per_frame": total_time / len(frame_times),
+                "avg_time_per_frame": avg_time,
+                "fps": round(fps, 2),
                 "warmup_time": warmup_time,
                 "warmup_inference": warmup_inference,
                 "device": str(self.device)

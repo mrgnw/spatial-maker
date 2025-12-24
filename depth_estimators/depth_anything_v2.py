@@ -1,17 +1,19 @@
 import time
-import sys
+import subprocess
 import os
+import sys
 from pathlib import Path
+import tempfile
 import torch
 import numpy as np
 from PIL import Image
+import cv2
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "Video-Depth-Anything"))
-from video_depth_anything.video_depth import VideoDepthAnything
-from utils.dc_utils import read_video_frames
+sys.path.insert(0, str(Path(__file__).parent.parent / "Depth-Anything-V2"))
+from depth_anything_v2.dpt import DepthAnythingV2
 
 
-class VideoDepthAnythingEstimator:
+class DepthAnythingV2Estimator:
     def __init__(self, encoder='vits'):
         self.model = None
         self.device = None
@@ -31,19 +33,21 @@ class VideoDepthAnythingEstimator:
             'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
         }
 
-        checkpoint_path = Path(__file__).parent.parent / "Video-Depth-Anything" / "checkpoints" / f"video_depth_anything_{self.encoder}.pth"
+        checkpoint_path = Path(__file__).parent.parent / "Depth-Anything-V2" / "checkpoints" / f"depth_anything_v2_{self.encoder}.pth"
 
-        self.model = VideoDepthAnything(**model_configs[self.encoder], metric=False)
-        self.model.load_state_dict(torch.load(str(checkpoint_path), map_location='cpu'), strict=True)
+        self.model = DepthAnythingV2(**model_configs[self.encoder])
+        self.model.load_state_dict(torch.load(str(checkpoint_path), map_location='cpu'))
 
-        if torch.cuda.is_available():
+        if torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        elif torch.cuda.is_available():
             self.device = torch.device("cuda")
         else:
             self.device = torch.device("cpu")
 
         self.model = self.model.to(self.device).eval()
 
-    def process_video(self, video_path: str, output_dir: str = "output", max_frames: int = 3):
+    def process_video(self, video_path: str, output_dir: str = "output", max_frames: int = 8):
         warmup_start = time.time()
         self.load_model()
         warmup_time = time.time() - warmup_start
@@ -52,33 +56,42 @@ class VideoDepthAnythingEstimator:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"  Reading video frames...")
-        frames, fps = read_video_frames(video_path, process_length=max_frames, target_fps=-1, max_res=1280)
+        cap = cv2.VideoCapture(video_path)
+        frames = []
+        for i in range(max_frames):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frames.append(frame)
+        cap.release()
 
         print(f"  Warming up model with first frame...")
         warmup_start = time.time()
         with torch.no_grad():
-            _ = self.model.infer_video_depth(frames[:1], fps, input_size=518, device=self.device.type, fp32=False)
+            _ = self.model.infer_image(frames[0], 518)
         warmup_inference = time.time() - warmup_start
         print(f"  First inference (warmup): {warmup_inference:.3f}s")
 
-        print(f"  Running depth inference on {len(frames)} frames...")
-        start = time.time()
-        with torch.no_grad():
-            depths, _ = self.model.infer_video_depth(frames, fps, input_size=518, device=self.device.type, fp32=False)
-        total_time = time.time() - start
+        frame_times = []
 
-        print(f"  Saving depth maps...")
-        d_min, d_max = depths.min(), depths.max()
-        print(f"  Depth range: {d_min:.3f} to {d_max:.3f}")
-        for i, depth in enumerate(depths):
-            depth_normalized = ((depth - d_min) / (d_max - d_min) * 255).astype(np.uint8)
+        for i, frame in enumerate(frames):
+            print(f"  Processing frame {i+1}/{len(frames)}...")
+
+            start = time.time()
+            with torch.no_grad():
+                depth = self.model.infer_image(frame, 518)
+            elapsed = time.time() - start
+            frame_times.append(elapsed)
+            print(f"    Inference: {elapsed:.3f}s")
+
+            depth_normalized = ((depth - depth.min()) / (depth.max() - depth.min()) * 255).astype(np.uint8)
             Image.fromarray(depth_normalized).save(output_dir / f"depth_frame_{i+1:04d}.png")
 
-        avg_time = total_time / len(frames)
+        total_time = sum(frame_times)
+        avg_time = total_time / len(frame_times)
         fps = 1 / avg_time if avg_time > 0 else 0
         return {
-            "frames_processed": len(frames),
+            "frames_processed": len(frame_times),
             "total_time": total_time,
             "avg_time_per_frame": avg_time,
             "fps": round(fps, 2),

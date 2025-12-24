@@ -66,11 +66,13 @@ def main():
 
         print("\n" + "="*60)
         for model_name, stats in results.items():
+            fps = 1 / stats['avg_time_per_frame'] if stats['avg_time_per_frame'] > 0 else 0
             print(f"{model_name}:")
             print(f"  Frames: {stats['frames_processed']}")
             print(f"  Total: {stats['total_time']:.3f}s")
             print(f"  Avg/frame: {stats['avg_time_per_frame']:.3f}s")
-            print(f"  FPS: {1/stats['avg_time_per_frame']:.2f}")
+            print(f"  FPS: {fps:.2f}")
+            stats['fps'] = round(fps, 2)
         print("="*60)
 
         save_results(results)
