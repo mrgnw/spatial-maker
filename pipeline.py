@@ -99,12 +99,14 @@ def run_pipeline(
         print("=" * 60)
 
         sbs_video = work_dir / f"{input_path.stem}_sbs.mp4"
+        max_frames = int(duration * 24) if duration else None
         sbs_result = process_video_to_sbs(
             prepared_video,
             str(sbs_video),
             encoder=encoder,
             max_disparity=max_disparity,
             fps=24,
+            max_frames=max_frames,
         )
         print(f"  Processed {sbs_result['frames_processed']} frames")
         print(f"  SBS video: {sbs_result['output_path']}")
