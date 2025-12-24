@@ -10,6 +10,7 @@ dependencies = [
     "imageio-ffmpeg>=0.6.0",
     "matplotlib>=3.10.8",
     "opencv-python>=4.11.0.86",
+    "psutil>=7.2.0",
 ]
 
 [tool.ruff.format]
