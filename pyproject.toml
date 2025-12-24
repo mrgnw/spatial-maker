@@ -1,0 +1,13 @@
+[project]
+name = "spatial-maker"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+dependencies = [
+    "torch>=2",
+    "torchvision",
+    "huggingface_hub",
+    "numpy<2",
+    "pillow",
+    "timm",
+]
