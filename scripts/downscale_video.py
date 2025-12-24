@@ -22,7 +22,7 @@ def downscale_to_1080p24(input_path: str, output_path: str = None, duration: flo
             "-b:a", "192k",
             str(cached)
         ]
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, capture_output=True)
 
     if duration is not None:
         if output_path is None:
@@ -33,7 +33,7 @@ def downscale_to_1080p24(input_path: str, output_path: str = None, duration: flo
             "-c", "copy",
             output_path
         ]
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, capture_output=True)
         return output_path
 
     if output_path is None:

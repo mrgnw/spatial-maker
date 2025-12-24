@@ -16,6 +16,9 @@ from tqdm import tqdm
 
 from depth_anything_v2.dpt import DepthAnythingV2
 
+_threads_configured = False
+_processor_cache = {}
+
 
 def create_stereo_pair(
     rgb_frame: np.ndarray,
@@ -83,11 +86,14 @@ class DepthToStereoProcessor:
 
     def load_model(self):
         """Load the Depth Anything V2 model."""
+        global _threads_configured
         if self.model is not None:
             return
 
-        torch.set_num_threads(self.num_threads)
-        torch.set_num_interop_threads(self.num_threads)
+        if not _threads_configured:
+            torch.set_num_threads(self.num_threads)
+            torch.set_num_interop_threads(self.num_threads)
+            _threads_configured = True
 
         model_configs = {
             "vits": {"encoder": "vits", "features": 64, "out_channels": [48, 96, 192, 384]},
@@ -243,6 +249,9 @@ def process_video_to_sbs(
     """
     Convenience function to process a video to SBS stereo.
 
+    Uses a cached processor instance to reuse the model across multiple calls
+    (important for batch processing).
+
     Args:
         video_path: Path to input RGB video
         output_path: Path for output SBS video
@@ -254,7 +263,13 @@ def process_video_to_sbs(
     Returns:
         Dict with processing statistics
     """
-    processor = DepthToStereoProcessor(encoder=encoder)
+    global _processor_cache
+
+    # Reuse processor for same encoder to avoid reloading model
+    if encoder not in _processor_cache:
+        _processor_cache[encoder] = DepthToStereoProcessor(encoder=encoder)
+
+    processor = _processor_cache[encoder]
     return processor.process_video(
         video_path,
         output_path,
