@@ -1,6 +1,7 @@
 import time
 import subprocess
 import os
+import psutil
 from pathlib import Path
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -34,10 +35,16 @@ class AppleDepthPro:
             self.device = torch.device("cpu")
 
     def process_video(self, video_path: str, output_dir: str = "output", max_frames: int = 8):
+        process = psutil.Process()
+        mem_before = process.memory_info().rss / 1024 / 1024
+
         warmup_start = time.time()
         self.load_model()
         warmup_time = time.time() - warmup_start
+
+        mem_after_load = process.memory_info().rss / 1024 / 1024
         print(f"  Model load time: {warmup_time:.3f}s")
+        print(f"  Memory after load: {mem_after_load:.1f} MB (delta: +{mem_after_load - mem_before:.1f} MB)")
 
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -84,6 +91,9 @@ class AppleDepthPro:
             total_time = sum(frame_times)
             avg_time = total_time / len(frame_times)
             fps = 1 / avg_time if avg_time > 0 else 0
+
+            mem_peak = process.memory_info().rss / 1024 / 1024
+
             return {
                 "frames_processed": len(frame_times),
                 "total_time": total_time,
@@ -91,5 +101,6 @@ class AppleDepthPro:
                 "fps": round(fps, 2),
                 "warmup_time": warmup_time,
                 "warmup_inference": warmup_inference,
+                "memory_mb": round(mem_peak, 1),
                 "device": str(self.device)
             }
