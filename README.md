@@ -74,3 +74,9 @@ We are going to use the spatial cli for the final conversion, so don't read thes
 - [Converting side-by-side 3D video to multiview HEVC and spatial video](https://developer.apple.com/documentation/AVFoundation/converting-side-by-side-3d-video-to-multiview-hevc-and-spatial-video)
 - [https://developer.apple.com/documentation/imageio/creating-spatial-photos-and-videos-with-spatial-metadata](https://developer.apple.com/documentation/imageio/creating-spatial-photos-and-videos-with-spatial-metadata)
 - [Writing-spatial-photos](https://developer.apple.com/documentation/ImageIO/writing-spatial-photos)
+
+
+# Instructions added after starting
+
+- I would like to keep our code clean and modular - each approach can be its own module, and the benchmark script will run and time each approach. So for now we'll have our apple depth module, and the benchmark module will import that and benchmark it.
+- our benchmark can specify a number of seconds to sample, defaulting to 3 seconds
