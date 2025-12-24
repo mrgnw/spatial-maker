@@ -4,7 +4,7 @@ import csv
 import sys
 from pathlib import Path
 import tempfile
-from depth_estimators import AppleDepthPro
+from depth_estimators import AppleDepthPro, VideoDepthAnythingEstimator
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
 from downscale_video import downscale_to_1080p24
 
@@ -38,16 +38,19 @@ def main():
         sys.exit(1)
 
     video_path = sys.argv[1]
-    sample_seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
+    sample_seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 0.125
 
     output_base = Path("output")
     output_base.mkdir(exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        prepared_video = Path(tmpdir) / "sample.mp4"
-
-        print(f"Downscaling to 1080p24fps and trimming to {sample_seconds}s...")
-        downscale_to_1080p24(video_path, str(prepared_video), duration=sample_seconds)
+        if sample_seconds:
+            prepared_video = Path(tmpdir) / "sample.mp4"
+            print(f"Downscaling to 1080p24fps and trimming to {sample_seconds}s...")
+            downscale_to_1080p24(video_path, str(prepared_video), duration=sample_seconds)
+        else:
+            print(f"Using cached 1080p24fps version...")
+            prepared_video = Path(downscale_to_1080p24(video_path))
 
         results = {}
 
@@ -55,6 +58,11 @@ def main():
         depth_dir = output_base / "apple_depth_pro"
         estimator = AppleDepthPro()
         results["apple_depth_pro"] = estimator.process_video(str(prepared_video), str(depth_dir))
+
+        print("\nBenchmarking Video Depth Anything...")
+        depth_dir = output_base / "video_depth_anything"
+        estimator = VideoDepthAnythingEstimator()
+        results["video_depth_anything"] = estimator.process_video(str(prepared_video), str(depth_dir))
 
         print("\n" + "="*60)
         for model_name, stats in results.items():

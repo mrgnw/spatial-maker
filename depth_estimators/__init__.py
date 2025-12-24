@@ -1,1 +1,2 @@
 from .apple_depth_pro import AppleDepthPro
+from .video_depth_anything import VideoDepthAnythingEstimator
