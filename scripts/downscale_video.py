@@ -13,10 +13,11 @@ def downscale_to_1080p24(input_path: str, output_path: str = None, duration: flo
         cached.parent.mkdir(parents=True, exist_ok=True)
         cmd = [
             "ffmpeg", "-y", "-i", input_path,
-            "-vf", "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease",
+            "-vf", "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:flags=lanczos",
             "-r", "24",
-            "-c:v", "h264_videotoolbox",
-            "-b:v", "8M",
+            "-c:v", "hevc_videotoolbox",
+            "-q:v", "65",  # Quality setting (0-100, higher = better quality)
+            "-tag:v", "hvc1",
             "-c:a", "aac",
             "-b:a", "192k",
             str(cached)
