@@ -34,3 +34,4 @@ src/debug_main.py
 temp*.png
 /outputs
 checkpoints/depth_pro.pt
+benchmark_test.log
