@@ -9,11 +9,21 @@ Convert 2D videos to stereoscopic 3D spatial videos for viewing on VR headsets (
 git clone https://github.com/yourname/spatial-maker.git
 cd spatial-maker
 
-# Install with uv (recommended)
-uv sync
-
-# Or install globally as a tool
+# Install globally (adds spatial-maker to your PATH)
 uv tool install .
+
+# Or for development (run with: uv run spatial-maker)
+uv sync
+```
+
+To update after making changes:
+```bash
+uv tool install . --force
+```
+
+To uninstall:
+```bash
+uv tool uninstall spatial-maker
 ```
 
 ### Requirements
