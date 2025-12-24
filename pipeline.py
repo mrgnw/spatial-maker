@@ -67,7 +67,7 @@ def run_pipeline(
 
     # Set up output paths
     if output_path is None:
-        output_path = input_path.parent / f"{input_path.stem}_spatial.mov"
+        output_path = Path("output") / f"{input_path.stem}_spatial.mov"
     else:
         output_path = Path(output_path)
 
@@ -117,7 +117,7 @@ def run_pipeline(
             str(sbs_video),
             max_disparity=max_disparity,
             fps=24,
-            half_width=True,
+            half_width=False,  # Full-width SBS so each eye maintains original resolution
         )
         print(f"  SBS video: {sbs_result}")
 
