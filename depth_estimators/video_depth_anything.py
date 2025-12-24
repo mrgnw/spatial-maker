@@ -75,10 +75,13 @@ class VideoDepthAnythingEstimator:
             depth_normalized = ((depth - d_min) / (d_max - d_min) * 255).astype(np.uint8)
             Image.fromarray(depth_normalized).save(output_dir / f"depth_frame_{i+1:04d}.png")
 
+        avg_time = total_time / len(frames)
+        fps = 1 / avg_time if avg_time > 0 else 0
         return {
             "frames_processed": len(frames),
             "total_time": total_time,
-            "avg_time_per_frame": total_time / len(frames),
+            "avg_time_per_frame": avg_time,
+            "fps": round(fps, 2),
             "warmup_time": warmup_time,
             "warmup_inference": warmup_inference,
             "device": str(self.device)
