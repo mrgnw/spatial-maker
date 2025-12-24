@@ -26,6 +26,9 @@ from scripts.depth_to_stereo import process_video_to_sbs
 # Video formats to process when given a folder
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm", ".wmv", ".flv"}
 
+# Encoder name mapping (CLI shorthand -> model name)
+ENCODER_MAP = {"s": "vits", "m": "vitb", "l": "vitl"}
+
 
 def check_spatial_cli():
     """Check if the spatial CLI is available."""
@@ -263,22 +266,22 @@ def main():
         epilog="""
 Examples:
     # Single file
-    python pipeline.py video.mp4
+    spatial-maker video.mp4
 
     # Process all videos in a folder
-    python pipeline.py /path/to/videos/
+    spatial-maker /path/to/videos/
 
     # Use larger encoder for better depth quality
-    python pipeline.py video.mp4 --encoder vitl
+    spatial-maker video.mp4 --encoder l
 
     # Adjust 3D intensity
-    python pipeline.py video.mp4 --max-disparity 40
+    spatial-maker video.mp4 --max-disparity 40
 
     # Process only first 10 seconds
-    python pipeline.py video.mp4 --duration 10
+    spatial-maker video.mp4 --duration 10
 
     # Keep intermediate files for debugging
-    python pipeline.py video.mp4 --keep-intermediate
+    spatial-maker video.mp4 --keep-intermediate
         """,
     )
     parser.add_argument(
@@ -291,9 +294,9 @@ Examples:
     )
     parser.add_argument(
         "--encoder",
-        choices=["vits", "vitb", "vitl"],
-        default="vits",
-        help="Depth Anything V2 encoder size (default: vits)",
+        choices=["s", "m", "l"],
+        default="s",
+        help="Depth Anything V2 encoder size: s=small, m=medium, l=large (default: s)",
     )
     parser.add_argument(
         "--max-disparity",
@@ -320,6 +323,9 @@ Examples:
     args = parser.parse_args()
     input_path = Path(args.input)
 
+    # Map encoder shorthand to full name
+    encoder = ENCODER_MAP[args.encoder]
+
     try:
         if input_path.is_dir():
             # Batch mode - process all videos in folder
@@ -327,7 +333,7 @@ Examples:
                 print("Warning: -o/--output is ignored in folder mode. Output goes to <folder>/spatial/")
             results = run_batch(
                 input_path,
-                encoder=args.encoder,
+                encoder=encoder,
                 max_disparity=args.max_disparity,
                 keep_intermediate=args.keep_intermediate,
                 skip_downscale=args.skip_downscale,
@@ -340,7 +346,7 @@ Examples:
             result = run_pipeline(
                 args.input,
                 output_path=args.output,
-                encoder=args.encoder,
+                encoder=encoder,
                 max_disparity=args.max_disparity,
                 keep_intermediate=args.keep_intermediate,
                 skip_downscale=args.skip_downscale,
