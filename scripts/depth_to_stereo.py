@@ -6,7 +6,6 @@ into a single streaming pipeline that avoids writing intermediate depth frames t
 """
 
 import subprocess
-import sys
 import os
 from pathlib import Path
 
@@ -15,7 +14,6 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "Depth-Anything-V2"))
 from depth_anything_v2.dpt import DepthAnythingV2
 
 
@@ -99,7 +97,6 @@ class DepthToStereoProcessor:
 
         checkpoint_path = (
             Path(__file__).parent.parent
-            / "Depth-Anything-V2"
             / "checkpoints"
             / f"depth_anything_v2_{self.encoder}.pth"
         )

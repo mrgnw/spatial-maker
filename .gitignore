@@ -33,6 +33,6 @@ input_images*/
 src/debug_main.py
 temp*.png
 /outputs
-checkpoints/depth_pro.pt
+checkpoints/
 benchmark_test.log
 /output
