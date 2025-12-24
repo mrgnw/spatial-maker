@@ -9,9 +9,11 @@ import torch
 import numpy as np
 from PIL import Image
 import cv2
+from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "Depth-Anything-V2"))
 from depth_anything_v2.dpt import DepthAnythingV2
+from scripts.stitch_video import stitch_frames_to_hevc
 
 _threads_configured = False
 
@@ -53,7 +55,7 @@ class DepthAnythingV2Estimator:
 
         self.model = self.model.to(self.device).eval()
 
-    def process_video(self, video_path: str, output_dir: str = "output", max_frames: int = 8):
+    def process_video(self, video_path: str, output_dir: str = "output", max_frames: int = None):
         process = psutil.Process()
         mem_before = process.memory_info().rss / 1024 / 1024
 
@@ -70,14 +72,17 @@ class DepthAnythingV2Estimator:
 
         cap = cv2.VideoCapture(video_path)
         frames = []
-        for i in range(max_frames):
+        i = 0
+        while True:
             ret, frame = cap.read()
             if not ret:
                 break
+            if max_frames is not None and i >= max_frames:
+                break
             frames.append(frame)
+            i += 1
         cap.release()
 
-        print(f"  Warming up model with first frame...")
         warmup_start = time.time()
         with torch.no_grad():
             _ = self.model.infer_image(frames[0], 518)
@@ -86,15 +91,12 @@ class DepthAnythingV2Estimator:
 
         frame_times = []
 
-        for i, frame in enumerate(frames):
-            print(f"  Processing frame {i+1}/{len(frames)}...")
-
+        for i, frame in enumerate(tqdm(frames, desc="  Processing frames", unit="frame")):
             start = time.time()
             with torch.no_grad():
                 depth = self.model.infer_image(frame, 518)
             elapsed = time.time() - start
             frame_times.append(elapsed)
-            print(f"    Inference: {elapsed:.3f}s")
 
             depth_normalized = ((depth - depth.min()) / (depth.max() - depth.min()) * 255).astype(np.uint8)
             Image.fromarray(depth_normalized).save(output_dir / f"depth_frame_{i+1:04d}.png")
@@ -105,6 +107,12 @@ class DepthAnythingV2Estimator:
 
         mem_peak = process.memory_info().rss / 1024 / 1024
 
+        print(f"  Stitching frames to HEVC video...")
+        # Create video path adjacent to output_dir with same name
+        output_dir_name = output_dir.name
+        video_path = output_dir.parent / f"{output_dir_name}.mp4"
+        stitch_frames_to_hevc(str(output_dir), str(video_path), fps=24)
+
         return {
             "frames_processed": len(frame_times),
             "total_time": total_time,
@@ -113,5 +121,6 @@ class DepthAnythingV2Estimator:
             "warmup_time": warmup_time,
             "warmup_inference": warmup_inference,
             "memory_mb": round(mem_peak, 1),
-            "device": str(self.device)
+            "device": str(self.device),
+            "video_path": str(video_path)
         }
