@@ -140,7 +140,6 @@ class DepthToStereoProcessor:
         Returns:
             Dict with processing statistics
         """
-        print("  Loading depth model...")
         self.load_model()
 
         # Open input video
@@ -194,12 +193,11 @@ class DepthToStereoProcessor:
 
         with torch.no_grad():
             _ = self.model.infer_image(first_frame, 518)
-        print("  Model warmed up")
 
         frames_processed = 0
 
         try:
-            for _ in tqdm(range(total_frames), desc="  Processing", unit="frame"):
+            for _ in tqdm(range(total_frames), desc="  ", unit="frame", ncols=60):
                 ret, rgb_frame = cap.read()
                 if not ret:
                     break
