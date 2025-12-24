@@ -3,29 +3,27 @@ name = "spatial-maker"
 version = "0.0.0"
 requires-python = ">=3.10"
 dependencies = [
+    "jkp-depth-anything-v2",
     "depth-pro",
     "easydict>=1.13",
     "einops>=0.8.1",
+    "huggingface_hub",
     "imageio>=2.37.2",
     "imageio-ffmpeg>=0.6.0",
     "matplotlib>=3.10.8",
+    "numpy",
     "opencv-python>=4.11.0.86",
+    "pillow",
     "psutil>=7.2.0",
+    "timm",
+    "torch>=2",
+    "torchvision",
     "tqdm>=4.67.1",
 ]
 
 [tool.ruff.format]
 quote-style = "single"
 indent-style = "tab"
-
-dependencies = [
-    "torch>=2",
-    "torchvision",
-    "huggingface_hub",
-    "numpy<2",
-    "pillow",
-    "timm",
-]
 
 [tool.uv.sources]
 depth-pro = { git = "https://github.com/apple/ml-depth-pro.git" }

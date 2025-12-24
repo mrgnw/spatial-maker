@@ -1,7 +1,6 @@
 import time
 import subprocess
 import os
-import sys
 import psutil
 from pathlib import Path
 import tempfile
@@ -11,7 +10,6 @@ from PIL import Image
 import cv2
 from tqdm import tqdm
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "Depth-Anything-V2"))
 from depth_anything_v2.dpt import DepthAnythingV2
 from scripts.stitch_video import stitch_frames_to_hevc
 
@@ -41,7 +39,7 @@ class DepthAnythingV2Estimator:
             'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
         }
 
-        checkpoint_path = Path(__file__).parent.parent / "Depth-Anything-V2" / "checkpoints" / f"depth_anything_v2_{self.encoder}.pth"
+        checkpoint_path = Path(__file__).parent.parent / "checkpoints" / f"depth_anything_v2_{self.encoder}.pth"
 
         self.model = DepthAnythingV2(**model_configs[self.encoder])
         self.model.load_state_dict(torch.load(str(checkpoint_path), map_location='cpu'))
