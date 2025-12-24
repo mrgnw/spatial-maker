@@ -2,9 +2,11 @@
 import json
 import csv
 import sys
+import os
 from pathlib import Path
 import tempfile
-from depth_estimators import AppleDepthPro, VideoDepthAnythingEstimator
+# from depth_estimators import AppleDepthPro
+from depth_estimators.depth_anything_v2 import DepthAnythingV2Estimator
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
 from downscale_video import downscale_to_1080p24
 
@@ -19,14 +21,15 @@ def save_results(results: dict, output_dir: str = "benchmarks"):
     tsv_path = Path(output_dir) / "results.tsv"
     with open(tsv_path, "w", newline='') as f:
         writer = csv.writer(f, delimiter="\t")
-        writer.writerow(["model", "frames", "total_time", "avg_time", "fps"])
+        writer.writerow(["model", "frames", "total_time", "avg_time", "fps", "video_path"])
         for model_name, stats in results.items():
             writer.writerow([
                 model_name,
                 stats["frames_processed"],
                 stats["total_time"],
                 stats["avg_time_per_frame"],
-                round(1 / stats["avg_time_per_frame"], 2)
+                round(1 / stats["avg_time_per_frame"], 2),
+                stats.get("video_path", "")
             ])
 
     print(f"\nResults saved to {output_dir}/")
@@ -53,26 +56,36 @@ def main():
             prepared_video = Path(downscale_to_1080p24(video_path))
 
         results = {}
+        num_threads = max(1, os.cpu_count() - 4)
 
-        print("\nBenchmarking Apple Depth Pro...")
-        depth_dir = output_base / "apple_depth_pro"
-        estimator = AppleDepthPro()
-        results["apple_depth_pro"] = estimator.process_video(str(prepared_video), str(depth_dir))
+        # print("\nBenchmarking Apple Depth Pro...")
+        # depth_dir = output_base / "apple_depth_pro"
+        # estimator = AppleDepthPro()
+        # results["apple_depth_pro"] = estimator.process_video(str(prepared_video), str(depth_dir))
 
-        print("\nBenchmarking Video Depth Anything...")
-        depth_dir = output_base / "video_depth_anything"
-        estimator = VideoDepthAnythingEstimator()
-        results["video_depth_anything"] = estimator.process_video(str(prepared_video), str(depth_dir))
+        print("\nBenchmarking Depth Anything V2 Small...")
+        depth_dir = output_base / "depth_anything_v2_small"
+        estimator = DepthAnythingV2Estimator(encoder='vits', num_threads=num_threads)
+        results["depth_anything_v2_small"] = estimator.process_video(str(prepared_video), str(depth_dir))
+
+        print("\nBenchmarking Depth Anything V2 Base...")
+        depth_dir = output_base / "depth_anything_v2_base"
+        estimator = DepthAnythingV2Estimator(encoder='vitb', num_threads=num_threads)
+        results["depth_anything_v2_base"] = estimator.process_video(str(prepared_video), str(depth_dir))
+
+        print("\nBenchmarking Depth Anything V2 Large...")
+        depth_dir = output_base / "depth_anything_v2_large"
+        estimator = DepthAnythingV2Estimator(encoder='vitl', num_threads=num_threads)
+        results["depth_anything_v2_large"] = estimator.process_video(str(prepared_video), str(depth_dir))
 
         print("\n" + "="*60)
         for model_name, stats in results.items():
-            fps = 1 / stats['avg_time_per_frame'] if stats['avg_time_per_frame'] > 0 else 0
             print(f"{model_name}:")
             print(f"  Frames: {stats['frames_processed']}")
             print(f"  Total: {stats['total_time']:.3f}s")
             print(f"  Avg/frame: {stats['avg_time_per_frame']:.3f}s")
-            print(f"  FPS: {fps:.2f}")
-            stats['fps'] = round(fps, 2)
+            print(f"  FPS: {stats['fps']}")
+            print(f"  Video: {stats.get('video_path', 'N/A')}")
         print("="*60)
 
         save_results(results)

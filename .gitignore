@@ -35,3 +35,4 @@ temp*.png
 /outputs
 checkpoints/depth_pro.pt
 benchmark_test.log
+/output

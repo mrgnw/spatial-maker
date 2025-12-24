@@ -9,6 +9,8 @@ import torch
 import depth_pro
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
+from scripts.stitch_video import stitch_frames_to_hevc
 
 
 class AppleDepthPro:
@@ -34,7 +36,7 @@ class AppleDepthPro:
         else:
             self.device = torch.device("cpu")
 
-    def process_video(self, video_path: str, output_dir: str = "output", max_frames: int = 8):
+    def process_video(self, video_path: str, output_dir: str = "output", max_frames: int = None):
         process = psutil.Process()
         mem_before = process.memory_info().rss / 1024 / 1024
 
@@ -53,12 +55,14 @@ class AppleDepthPro:
             frames_dir = Path(tmpdir) / "frames"
             frames_dir.mkdir()
 
-            cmd = ["ffmpeg", "-i", video_path, "-frames:v", str(max_frames), f"{frames_dir}/frame_%04d.png"]
+            cmd = ["ffmpeg", "-i", video_path]
+            if max_frames is not None:
+                cmd.extend(["-frames:v", str(max_frames)])
+            cmd.append(f"{frames_dir}/frame_%04d.png")
             subprocess.run(cmd, capture_output=True, check=True)
 
             frames = sorted(frames_dir.glob("frame_*.png"))
 
-            print(f"  Warming up model with first frame...")
             first_frame = frames[0]
             image, _, f_px = depth_pro.load_rgb(str(first_frame))
             image = self.transform(image).to(self.device)
@@ -70,8 +74,7 @@ class AppleDepthPro:
 
             frame_times = []
 
-            for i, frame in enumerate(frames, 1):
-                print(f"  Processing frame {i}/{len(frames)}...")
+            for i, frame in enumerate(tqdm(frames, desc="  Processing frames", unit="frame"), 1):
                 output = output_dir / f"depth_{frame.name}"
 
                 image, _, f_px = depth_pro.load_rgb(str(frame))
@@ -82,7 +85,6 @@ class AppleDepthPro:
                     prediction = self.model.infer(image, f_px=f_px)
                 elapsed = time.time() - start
                 frame_times.append(elapsed)
-                print(f"    Inference: {elapsed:.3f}s")
 
                 depth = prediction["depth"].cpu().numpy()
                 depth_normalized = ((depth - depth.min()) / (depth.max() - depth.min()) * 255).astype(np.uint8)
@@ -94,6 +96,12 @@ class AppleDepthPro:
 
             mem_peak = process.memory_info().rss / 1024 / 1024
 
+            print(f"  Stitching frames to HEVC video...")
+            # Create video path adjacent to output_dir with same name
+            output_dir_name = output_dir.name
+            video_path = output_dir.parent / f"{output_dir_name}.mp4"
+            stitch_frames_to_hevc(str(output_dir), str(video_path), fps=24)
+
             return {
                 "frames_processed": len(frame_times),
                 "total_time": total_time,
@@ -102,5 +110,6 @@ class AppleDepthPro:
                 "warmup_time": warmup_time,
                 "warmup_inference": warmup_inference,
                 "memory_mb": round(mem_peak, 1),
-                "device": str(self.device)
+                "device": str(self.device),
+                "video_path": str(video_path)
             }
