@@ -7,28 +7,38 @@ from pathlib import Path
 def downscale_to_1080p24(input_path: str, output_path: str = None, duration: float = None):
     input_p = Path(input_path)
 
-    if output_path is None:
-        cached = Path("samples/1080p24fps") / f"{input_p.stem}_1080p{input_p.suffix}"
-        if cached.exists() and duration is None:
-            return str(cached)
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        output_path = str(cached)
+    cached = Path("samples/1080p24fps") / f"{input_p.stem}_1080p{input_p.suffix}"
 
-    cmd = ["ffmpeg", "-y", "-i", input_path]
+    if not cached.exists():
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-vf", "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease",
+            "-r", "24",
+            "-c:v", "h264_videotoolbox",
+            "-b:v", "8M",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            str(cached)
+        ]
+        subprocess.run(cmd, check=True)
 
     if duration is not None:
-        cmd.extend(["-t", str(duration)])
+        if output_path is None:
+            raise ValueError("output_path required when duration is specified")
+        cmd = [
+            "ffmpeg", "-y", "-i", str(cached),
+            "-t", str(duration),
+            "-c", "copy",
+            output_path
+        ]
+        subprocess.run(cmd, check=True)
+        return output_path
 
-    cmd.extend([
-        "-vf", "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease",
-        "-r", "24",
-        "-c:v", "h264_videotoolbox",
-        "-b:v", "8M",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        output_path
-    ])
-    subprocess.run(cmd, check=True)
+    if output_path is None:
+        return str(cached)
+
+    Path(cached).replace(output_path)
     return output_path
 
 

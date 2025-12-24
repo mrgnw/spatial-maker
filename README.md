@@ -80,3 +80,5 @@ We are going to use the spatial cli for the final conversion, so don't read thes
 
 - I would like to keep our code clean and modular - each approach can be its own module, and the benchmark script will run and time each approach. So for now we'll have our apple depth module, and the benchmark module will import that and benchmark it.
 - our benchmark can specify a number of seconds to sample, defaulting to 3 seconds
+  - when downsizing/sampling, we need to check [@1080p24fps](file:///Users/m/dev/xr/spatial-maker/samples/1080p24fps) dir to see if a downsized version already exists. If it doesn't, then we want to save it there to save us time.
+- save the output depth analysis so we can compare
