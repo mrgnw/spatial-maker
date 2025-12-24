@@ -136,10 +136,13 @@ def run_pipeline(
             cmd = [
                 "spatial",
                 "make",
-                "--sbs",
+                "-i",
                 str(sbs_video),
+                "-f",
+                "sbs",
                 "-o",
                 str(output_path),
+                "-y",
             ]
             print(f"  Running: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True)
