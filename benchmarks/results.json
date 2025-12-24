@@ -1,0 +1,8 @@
+{
+  "apple_depth_pro": {
+    "frames_processed": 3,
+    "total_time": 12.463420629501343,
+    "avg_time_per_frame": 4.154473543167114,
+    "device": "mps"
+  }
+}
