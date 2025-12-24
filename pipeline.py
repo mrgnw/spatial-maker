@@ -20,8 +20,7 @@ from pathlib import Path
 import shutil
 
 from scripts.downscale_video import downscale_to_1080p24
-from scripts.stereo_converter import convert_video_to_sbs
-from depth_estimators import DepthAnythingV2Estimator
+from scripts.depth_to_stereo import process_video_to_sbs
 
 
 def check_spatial_cli():
@@ -94,36 +93,25 @@ def run_pipeline(
             )
             print(f"  Prepared video: {prepared_video}")
 
-        # Stage 2: Generate depth maps
+        # Stage 2: Generate depth and create SBS stereoscopic video
         print("\n" + "=" * 60)
-        print(f"Stage 2: Generating depth maps (encoder: {encoder})")
-        print("=" * 60)
-
-        depth_dir = work_dir / "depth_frames"
-        estimator = DepthAnythingV2Estimator(encoder=encoder)
-        depth_result = estimator.process_video(prepared_video, str(depth_dir))
-        print(f"  Processed {depth_result['frames_processed']} frames at {depth_result['fps']} fps")
-        print(f"  Depth video: {depth_result['video_path']}")
-
-        # Stage 3: Create side-by-side stereoscopic video
-        print("\n" + "=" * 60)
-        print(f"Stage 3: Creating SBS stereoscopic video (disparity: {max_disparity})")
+        print(f"Stage 2: Depth estimation + SBS stereo (encoder: {encoder}, disparity: {max_disparity})")
         print("=" * 60)
 
         sbs_video = work_dir / f"{input_path.stem}_sbs.mp4"
-        sbs_result = convert_video_to_sbs(
+        sbs_result = process_video_to_sbs(
             prepared_video,
-            str(depth_dir),
             str(sbs_video),
+            encoder=encoder,
             max_disparity=max_disparity,
             fps=24,
-            half_width=False,  # Full-width SBS so each eye maintains original resolution
         )
-        print(f"  SBS video: {sbs_result}")
+        print(f"  Processed {sbs_result['frames_processed']} frames")
+        print(f"  SBS video: {sbs_result['output_path']}")
 
-        # Stage 4: Convert to spatial video using spatial CLI
+        # Stage 3: Convert to spatial video using spatial CLI
         print("\n" + "=" * 60)
-        print("Stage 4: Converting to MV-HEVC spatial video")
+        print("Stage 3: Converting to MV-HEVC spatial video")
         print("=" * 60)
 
         if not check_spatial_cli():
