@@ -13,20 +13,25 @@ import cv2
 sys.path.insert(0, str(Path(__file__).parent.parent / "Depth-Anything-V2"))
 from depth_anything_v2.dpt import DepthAnythingV2
 
+_threads_configured = False
+
 
 class DepthAnythingV2Estimator:
-    def __init__(self, encoder='vits'):
+    def __init__(self, encoder='vits', num_threads=None):
         self.model = None
         self.device = None
         self.encoder = encoder
+        self.num_threads = num_threads if num_threads is not None else max(1, os.cpu_count() - 4)
 
     def load_model(self):
+        global _threads_configured
         if self.model is not None:
             return
 
-        num_threads = max(1, os.cpu_count() - 4)
-        torch.set_num_threads(num_threads)
-        torch.set_num_interop_threads(num_threads)
+        if not _threads_configured:
+            torch.set_num_threads(self.num_threads)
+            torch.set_num_interop_threads(self.num_threads)
+            _threads_configured = True
 
         model_configs = {
             'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
