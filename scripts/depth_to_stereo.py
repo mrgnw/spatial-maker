@@ -168,7 +168,7 @@ class DepthToStereoProcessor:
             "-r", str(fps),
             "-i", "-",  # Read from stdin
             "-c:v", "hevc_videotoolbox",
-            "-b:v", "12M",
+            "-q:v", "65",  # Quality-based encoding (0-100, higher = better)
             "-tag:v", "hvc1",
             str(output_path),
         ]

@@ -132,8 +132,8 @@ def run_pipeline(
                 "sbs",
                 "-o",
                 str(output_path),
-                "-b",
-                "20M",  # High bitrate for quality
+                "-q",
+                "0.9",  # High quality (0.0-1.0), ~48 Mbps output
                 "-y",
             ]
             print(f"  Running: {' '.join(cmd)}")
