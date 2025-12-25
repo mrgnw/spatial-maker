@@ -39,11 +39,44 @@ def find_videos_in_folder(folder: Path) -> list[Path]:
     return sorted(set(videos))
 
 
+def extract_audio(video_path: str, output_path: str) -> bool:
+    """Extract audio from video to AAC file. Returns True if audio exists."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-vn",  # No video
+        "-acodec", "aac",
+        "-b:a", "192k",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result.returncode == 0 and Path(output_path).exists()
+
+
+def mux_audio_to_video(video_path: str, audio_path: str, output_path: str) -> str:
+    """Mux audio into video file."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-i", audio_path,
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-shortest",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        # If muxing fails, return original video without audio
+        return video_path
+    return output_path
+
+
 def run_pipeline(
     input_video: str,
     output_path: str = None,
     encoder: str = "vits",
-    max_disparity: int = 30,
+    max_disparity: int = 40,
     keep_intermediate: bool = False,
     skip_downscale: bool = False,
     duration: float = None,
@@ -87,6 +120,14 @@ def run_pipeline(
             max_frames=max_frames,
         )
 
+        # Stage 2.5: Add audio from original video to SBS
+        audio_file = work_dir / f"{input_path.stem}_audio.aac"
+        if extract_audio(str(input_path), str(audio_file)):
+            sbs_with_audio = work_dir / f"{input_path.stem}_sbs_audio.mp4"
+            sbs_video = mux_audio_to_video(str(sbs_video), str(audio_file), str(sbs_with_audio))
+        else:
+            sbs_video = str(sbs_video)
+
         # Stage 3: Spatial video
         print("◉ Creating spatial video...")
         if not check_spatial_cli():
@@ -96,7 +137,7 @@ def run_pipeline(
 
         cmd = [
             "spatial", "make",
-            "-i", str(sbs_video),
+            "-i", sbs_video if isinstance(sbs_video, str) else str(sbs_video),
             "-f", "sbs",
             "-o", str(output_path),
             "-q", "0.9",
@@ -116,7 +157,7 @@ def run_pipeline(
 def run_batch(
     folder: Path,
     encoder: str = "vits",
-    max_disparity: int = 30,
+    max_disparity: int = 40,
     keep_intermediate: bool = False,
     skip_downscale: bool = False,
     duration: float = None,
@@ -186,8 +227,8 @@ Examples:
         help="Model size: s=small, m=medium, l=large (default: s)",
     )
     parser.add_argument(
-        "--max-disparity", type=int, default=30,
-        help="3D intensity, 20-50 for 1080p (default: 30)",
+        "--max-disparity", type=int, default=40,
+        help="3D intensity, 20-50 for 1080p (default: 40)",
     )
     parser.add_argument("--keep-intermediate", action="store_true", help="Keep intermediate files")
     parser.add_argument("--skip-downscale", action="store_true", help="Skip 1080p24 downscale")
