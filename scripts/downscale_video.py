@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
 def downscale_to_1080p24(input_path: str, output_path: str = None, duration: float = None):
     input_p = Path(input_path)
 
-    cached = Path("samples/1080p24fps") / f"{input_p.stem}_1080p{input_p.suffix}"
+    cache_dir = Path(tempfile.gettempdir()) / "spatial-maker" / "1080p24fps"
+    cached = cache_dir / f"{input_p.stem}_1080p{input_p.suffix}"
 
     if not cached.exists():
-        cached.parent.mkdir(parents=True, exist_ok=True)
+        cache_dir.mkdir(parents=True, exist_ok=True)
         cmd = [
             "ffmpeg", "-y", "-i", input_path,
             "-vf", "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:flags=lanczos",
