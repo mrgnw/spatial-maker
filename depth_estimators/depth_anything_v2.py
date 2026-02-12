@@ -1,6 +1,7 @@
 import time
 import subprocess
 import os
+import sys
 import psutil
 from pathlib import Path
 import tempfile
@@ -39,10 +40,8 @@ class DepthAnythingV2Estimator:
             'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
         }
 
-        checkpoint_path = Path(__file__).parent.parent / "checkpoints" / f"depth_anything_v2_{self.encoder}.pth"
-
-        self.model = DepthAnythingV2(**model_configs[self.encoder])
-        self.model.load_state_dict(torch.load(str(checkpoint_path), map_location='cpu'))
+        checkpoint_name = f"depth_anything_v2_{self.encoder}.pth"
+        checkpoint_path = self._find_checkpoint(checkpoint_name)
 
         if torch.backends.mps.is_available():
             self.device = torch.device("mps")
@@ -51,7 +50,51 @@ class DepthAnythingV2Estimator:
         else:
             self.device = torch.device("cpu")
 
+        self.model = DepthAnythingV2(**model_configs[self.encoder])
+        # Load weights directly to target device to avoid MPS/CPU tensor mismatch
+        self.model.load_state_dict(torch.load(str(checkpoint_path), map_location=self.device))
         self.model = self.model.to(self.device).eval()
+
+    def _find_checkpoint(self, checkpoint_name: str) -> Path:
+        """
+        Find checkpoint file in multiple possible locations.
+
+        Searches in order:
+        1. Next to the script's source directory (for development)
+        2. User's home directory ~/.spatial-maker/checkpoints/
+        3. XDG data directory
+        4. Current working directory ./checkpoints/
+        """
+        search_paths = [
+            # Development: relative to source file
+            Path(__file__).parent.parent / "checkpoints" / checkpoint_name,
+            # User home directory
+            Path.home() / ".spatial-maker" / "checkpoints" / checkpoint_name,
+            # XDG data home
+            Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+            / "spatial-maker" / "checkpoints" / checkpoint_name,
+            # Current working directory
+            Path.cwd() / "checkpoints" / checkpoint_name,
+        ]
+
+        # Also check if SPATIAL_MAKER_CHECKPOINTS env var is set
+        env_checkpoint_dir = os.environ.get("SPATIAL_MAKER_CHECKPOINTS")
+        if env_checkpoint_dir:
+            search_paths.insert(0, Path(env_checkpoint_dir) / checkpoint_name)
+
+        for path in search_paths:
+            if path.exists():
+                return path
+
+        # Not found - provide helpful error message
+        raise FileNotFoundError(
+            f"Checkpoint '{checkpoint_name}' not found.\n"
+            f"Searched locations:\n"
+            + "\n".join(f"  - {p}" for p in search_paths)
+            + "\n\nPlease download the checkpoint and place it in one of these locations:\n"
+            f"  mkdir -p ~/.spatial-maker/checkpoints\n"
+            f"  # Then copy {checkpoint_name} there"
+        )
 
     def process_video(self, video_path: str, output_dir: str = "output", max_frames: int = None):
         process = psutil.Process()
