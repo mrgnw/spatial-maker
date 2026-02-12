@@ -7,32 +7,54 @@ workspace/
 build/
 dist/
 *.egg-info/
-.gradio/
+.venv/
 
 # Test/coverage
 .coverage
 .pytest_cache/
 htmlcov/
 .tox/
-gallery*/
-debug*/
-DA3HF*/
-gradio_workspace/
-eval_workspace/
-FILTER*/
-input_images*/
-*.gradio/
 
-# Jupyter notebooks
-.ipynb_checkpoints
+# Media files
+*.mp4
+*.mov
+*.MOV
+*.avi
+*.mkv
+*.m4v
+*.webm
+*.wmv
+*.flv
+
+# Benchmarks and samples
+benchmarking/
+samples/
+benchmark_test.log
+
+# Model checkpoints (large, download separately)
+checkpoints/
+
+# Output
+/output
+/outputs
+
+# Dev/planning docs
+frame-ux-improvements.md
+
+# Removed files (kept locally for reference)
+benchmark.py
+estimate.py
+depth_estimators/
+scripts/depth_pro.py
+scripts/stereo_converter.py
+scripts/stitch_video.py
 
 # OS files
 .DS_Store
 
+# Editor
 .vscode
-src/debug_main.py
+.ruff_cache/
+
+# Misc
 temp*.png
-/outputs
-checkpoints/
-benchmark_test.log
-/output
