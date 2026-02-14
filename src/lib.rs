@@ -36,7 +36,7 @@ pub type StereoOutputFormat = OutputFormat;
 impl Default for SpatialConfig {
 	fn default() -> Self {
 		Self {
-			encoder_size: "b".to_string(),
+			encoder_size: "s".to_string(),
 			max_disparity: 30,
 			target_depth_size: 518,
 		}
