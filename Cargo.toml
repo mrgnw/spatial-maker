@@ -1,6 +1,6 @@
 [package]
 name = "spatial-maker"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT"
 description = "Convert 2D images and videos to stereoscopic 3D spatial content for Apple Vision Pro using AI depth estimation"
@@ -33,10 +33,16 @@ exclude = [
 name = "spatial_maker"
 path = "src/lib.rs"
 
+[[bin]]
+name = "spatial-maker"
+path = "src/main.rs"
+required-features = ["coreml"]
+
 [features]
-default = ["coreml"]
+default = ["coreml", "cli"]
 coreml = []
 onnx = ["dep:ort"]
+cli = ["dep:clap"]
 
 # Native format decoders (optional - falls back to ffmpeg if not enabled)
 avif = ["image/avif"]
@@ -62,10 +68,13 @@ ort = { version = "2.0.0-rc.11", features = ["half", "download-binaries"], optio
 jxl-oxide = { version = "0.9", optional = true }
 libheif-rs = { version = "2.1", optional = true }
 
+[dependencies.clap]
+version = "4"
+features = ["derive"]
+optional = true
+
 [dev-dependencies]
-clap = { version = "4", features = ["derive"] }
 tempfile = "3.8"
-tokio = { version = "1.0", features = ["full", "macros"] }
 
 [[example]]
 name = "photo_coreml"
