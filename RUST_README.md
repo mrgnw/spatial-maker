@@ -15,6 +15,37 @@ Convert 2D images and videos to stereoscopic 3D spatial content for Apple Vision
 
 ## Quick Start
 
+### Install the CLI
+
+```bash
+cargo install spatial-maker
+```
+
+### Convert a Video
+
+```bash
+INPUT_VIDEO=~/Movies/my-video.mp4
+OUTPUT_VIDEO=~/Desktop/spatial-video.mp4
+MODEL=b  # s (small), b (base), or l (large)
+
+spatial-maker video "$INPUT_VIDEO" -o "$OUTPUT_VIDEO" --model "$MODEL"
+```
+
+### Convert a Photo
+
+```bash
+INPUT_PHOTO=~/Pictures/photo.jpg
+OUTPUT_PHOTO=~/Desktop/spatial-photo.jpg
+MODEL=b
+MAX_DISPARITY=30  # Higher = more 3D depth
+
+spatial-maker photo "$INPUT_PHOTO" -o "$OUTPUT_PHOTO" \
+  --model "$MODEL" \
+  --max-disparity "$MAX_DISPARITY"
+```
+
+### Use as a Library
+
 Add to your `Cargo.toml`:
 
 ```toml
@@ -22,39 +53,41 @@ Add to your `Cargo.toml`:
 spatial-maker = "0.1"
 ```
 
-### Process a Photo
+Process a photo:
 
 ```rust
 use spatial_maker::{process_photo, SpatialConfig, OutputOptions};
+use std::path::Path;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let input_photo = Path::new("input.jpg");
+    let output_photo = Path::new("output_sbs.jpg");
+    
     let config = SpatialConfig::default(); // Uses Small model (48MB, auto-downloaded)
     let output_opts = OutputOptions::default(); // Side-by-side JPEG
 
-    process_photo(
-        "input.jpg".as_ref(),
-        "output_sbs.jpg".as_ref(),
-        config,
-        output_opts,
-    ).await?;
+    process_photo(input_photo, output_photo, config, output_opts).await?;
 
     Ok(())
 }
 ```
 
-### Process a Video
+Process a video:
 
 ```rust
 use spatial_maker::{process_video, SpatialConfig, VideoProgress};
+use std::path::Path;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let input_video = Path::new("input.mp4");
+    let output_video = Path::new("output_sbs.mp4");
     let config = SpatialConfig::default();
     
     process_video(
-        "input.mp4".as_ref(),
-        "output_sbs.mp4".as_ref(),
+        input_video,
+        output_video,
         config,
         Some(Box::new(|progress: VideoProgress| {
             println!("{}: {:.1}%", progress.stage, progress.percent);
@@ -77,12 +110,25 @@ Models are auto-downloaded from [HuggingFace](https://huggingface.co/mrgnw/depth
 
 ⚠️ Base and Large models are **non-commercial only** (CC-BY-NC-4.0). Small is Apache-2.0 (commercial OK).
 
-Select a model:
+Select a model (CLI):
+
+```bash
+MODEL=b  # s (small, 48MB), b (base, 186MB), l (large, 638MB)
+INPUT=~/Movies/video.mp4
+OUTPUT=~/Desktop/spatial.mp4
+
+spatial-maker video "$INPUT" -o "$OUTPUT" --model "$MODEL"
+```
+
+Select a model (library):
 
 ```rust
+let model_size = "b".to_string(); // "s", "b", or "l"
+let max_disparity = 30;
+
 let config = SpatialConfig {
-    encoder_size: "b".to_string(), // "s", "b", or "l"
-    max_disparity: 30,
+    encoder_size: model_size,
+    max_disparity,
     ..Default::default()
 };
 ```
