@@ -5,15 +5,72 @@ edition = "2021"
 license = "MIT"
 description = "Convert 2D images and videos to stereoscopic 3D spatial content for Apple Vision Pro using AI depth estimation"
 keywords = ["spatial-video", "3d", "stereoscopic", "apple-vision-pro", "depth-estimation"]
+categories = ["multimedia::images", "computer-vision"]
+repository = "https://github.com/mrgnw/spatial-maker"
+readme = "RUST_README.md"
+rust-version = "1.75"
+exclude = [
+	"spatial-maker-rust/",
+	"test_*.jpg",
+	"*.py",
+	"benchmarking/",
+	"samples/",
+	"todos/",
+	"output/",
+	"checkpoints/",
+	"__pycache__/",
+	".venv/",
+	"scripts/",
+	"research/",
+	"pyproject.toml",
+	"uv.lock",
+	"pipeline.py",
+]
+
+[lib]
+name = "spatial_maker"
+path = "src/lib.rs"
+
+[features]
+default = ["coreml"]
+coreml = []
+onnx = ["dep:ort"]
+
+# Native format decoders (optional - falls back to ffmpeg if not enabled)
+avif = ["image/avif"]
+jxl = ["dep:jxl-oxide"]
+heic = ["dep:libheif-rs"]
+native-formats = ["avif", "jxl", "heic"]
 
 [dependencies]
-ort = { version = "2.0.0-rc.11", features = ["coreml", "ndarray", "half", "download-binaries"] }
-image = "0.25"
-ndarray = "0.17"
-anyhow = "1.0"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "tiff", "webp"] }
+ndarray = "0.16"
+thiserror = "2"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+reqwest = { version = "0.12", features = ["stream"] }
+futures-util = "0.3"
 dirs = "5.0"
+tracing = "0.1"
 
-[build-dependencies]
+# Optional: ONNX Runtime backend
+ort = { version = "2.0.0-rc.11", features = ["half", "download-binaries"], optional = true }
+
+# Optional native decoders
+jxl-oxide = { version = "0.9", optional = true }
+libheif-rs = { version = "2.1", optional = true }
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
+tempfile = "3.8"
+tokio = { version = "1.0", features = ["full", "macros"] }
+
+[[example]]
+name = "photo_coreml"
+path = "examples/photo_coreml.rs"
+required-features = ["coreml"]
+
+[[example]]
+name = "photo"
+path = "examples/photo.rs"
+required-features = ["onnx"]
