@@ -5,6 +5,16 @@ use spatial_maker::{
 };
 use std::path::PathBuf;
 
+fn generate_output_path(input: &PathBuf, media_type: &str) -> PathBuf {
+	let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+	let extension = input.extension().and_then(|s| s.to_str()).unwrap_or(
+		if media_type == "video" { "mp4" } else { "jpg" }
+	);
+	
+	let parent = input.parent().unwrap_or_else(|| std::path::Path::new("."));
+	parent.join(format!("{}-spatial.{}", stem, extension))
+}
+
 #[derive(Parser)]
 #[command(name = "spatial-maker")]
 #[command(about = "Convert 2D images and videos to stereoscopic 3D spatial content")]
@@ -21,9 +31,9 @@ enum Commands {
 		/// Input image file
 		input: PathBuf,
 
-		/// Output image file
+		/// Output image file (defaults to input path with -spatial suffix)
 		#[arg(short, long)]
-		output: PathBuf,
+		output: Option<PathBuf>,
 
 		/// Model size: s (small, 48MB), b (base, 186MB), l (large, 638MB)
 		#[arg(short, long, default_value = "s")]
@@ -50,9 +60,9 @@ enum Commands {
 		/// Input video file
 		input: PathBuf,
 
-		/// Output video file
+		/// Output video file (defaults to input path with -spatial suffix)
 		#[arg(short, long)]
-		output: PathBuf,
+		output: Option<PathBuf>,
 
 		/// Model size: s (small, 48MB), b (base, 186MB), l (large, 638MB)
 		#[arg(short, long, default_value = "s")]
@@ -78,6 +88,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 			quality,
 			mvhevc,
 		} => {
+			let output = output.unwrap_or_else(|| generate_output_path(&input, "photo"));
+
 			let config = SpatialConfig {
 				encoder_size: model,
 				max_disparity,
@@ -122,6 +134,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 			model,
 			max_disparity,
 		} => {
+			let output = output.unwrap_or_else(|| generate_output_path(&input, "video"));
+
 			let config = SpatialConfig {
 				encoder_size: model,
 				max_disparity,
