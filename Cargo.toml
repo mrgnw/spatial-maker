@@ -1,6 +1,6 @@
 [package]
 name = "spatial-maker"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 license = "MIT"
 description = "Convert 2D images and videos to stereoscopic 3D spatial content for Apple Vision Pro using AI depth estimation"
