@@ -58,3 +58,8 @@ scripts/stitch_video.py
 
 # Misc
 temp*.png
+
+
+# Added by cargo
+
+/target
