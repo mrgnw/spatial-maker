@@ -1,119 +1,111 @@
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use spatial_maker::{
 	process_photo, process_video, ImageEncoding, MVHEVCConfig, OutputFormat, OutputOptions,
 	SpatialConfig, VideoProgress,
 };
 use std::path::PathBuf;
 
-fn generate_output_path(input: &PathBuf, media_type: &str) -> PathBuf {
-	let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-	let extension = input.extension().and_then(|s| s.to_str()).unwrap_or(
-		if media_type == "video" { "mp4" } else { "jpg" }
-	);
-	
-	let parent = input.parent().unwrap_or_else(|| std::path::Path::new("."));
-	parent.join(format!("{}-spatial.{}", stem, extension))
-}
-
 #[derive(Parser)]
 #[command(name = "spatial-maker")]
 #[command(about = "Convert 2D images and videos to stereoscopic 3D spatial content")]
 #[command(version)]
 struct Cli {
-	#[command(subcommand)]
-	command: Commands,
+	/// Input image or video file
+	input: PathBuf,
+
+	/// Output file (defaults to input path with -spatial suffix)
+	#[arg(short, long)]
+	output: Option<PathBuf>,
+
+	/// Model size: s (small, 48MB), b (base, 186MB), l (large, 638GB)
+	#[arg(short, long, default_value = "s")]
+	model: String,
+
+	/// Maximum disparity in pixels (higher = more 3D depth)
+	#[arg(long, default_value = "30")]
+	max_disparity: u32,
+
+	/// Output format for photos: sbs (side-by-side), tab (top-and-bottom), sep (separate L/R)
+	#[arg(long, default_value = "sbs")]
+	format: String,
+
+	/// JPEG quality for photos (1-100)
+	#[arg(long, default_value = "95")]
+	quality: u8,
+
+	/// Enable MV-HEVC packaging for photos (requires 'spatial' CLI in PATH)
+	#[arg(long)]
+	mvhevc: bool,
 }
 
-#[derive(Subcommand)]
-enum Commands {
-	/// Convert a photo to stereoscopic 3D
-	Photo {
-		/// Input image file
-		input: PathBuf,
+enum MediaType {
+	Photo,
+	Video,
+}
 
-		/// Output image file (defaults to input path with -spatial suffix)
-		#[arg(short, long)]
-		output: Option<PathBuf>,
+fn detect_media_type(path: &PathBuf) -> MediaType {
+	let ext = path
+		.extension()
+		.and_then(|s| s.to_str())
+		.unwrap_or("")
+		.to_lowercase();
 
-		/// Model size: s (small, 48MB), b (base, 186MB), l (large, 638MB)
-		#[arg(short, long, default_value = "s")]
-		model: String,
+	match ext.as_str() {
+		"mp4" | "mov" | "avi" | "mkv" | "m4v" | "webm" | "flv" | "wmv" | "mpg" | "mpeg" => {
+			MediaType::Video
+		}
+		_ => MediaType::Photo,
+	}
+}
 
-		/// Maximum disparity in pixels (higher = more 3D depth)
-		#[arg(long, default_value = "30")]
-		max_disparity: u32,
+fn generate_output_path(input: &PathBuf, media_type: &MediaType) -> PathBuf {
+	let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+	let extension = input.extension().and_then(|s| s.to_str()).unwrap_or(match media_type {
+		MediaType::Video => "mp4",
+		MediaType::Photo => "jpg",
+	});
 
-		/// Output format: sbs (side-by-side), tab (top-and-bottom), sep (separate L/R files)
-		#[arg(long, default_value = "sbs")]
-		format: String,
-
-		/// JPEG quality (1-100)
-		#[arg(long, default_value = "95")]
-		quality: u8,
-
-		/// Enable MV-HEVC packaging (requires 'spatial' CLI in PATH)
-		#[arg(long)]
-		mvhevc: bool,
-	},
-	/// Convert a video to stereoscopic 3D
-	Video {
-		/// Input video file
-		input: PathBuf,
-
-		/// Output video file (defaults to input path with -spatial suffix)
-		#[arg(short, long)]
-		output: Option<PathBuf>,
-
-		/// Model size: s (small, 48MB), b (base, 186MB), l (large, 638MB)
-		#[arg(short, long, default_value = "s")]
-		model: String,
-
-		/// Maximum disparity in pixels (higher = more 3D depth)
-		#[arg(long, default_value = "30")]
-		max_disparity: u32,
-	},
+	let parent = input.parent().unwrap_or_else(|| std::path::Path::new("."));
+	parent.join(format!("{}-spatial.{}", stem, extension))
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let cli = Cli::parse();
 
-	match cli.command {
-		Commands::Photo {
-			input,
-			output,
-			model,
-			max_disparity,
-			format,
-			quality,
-			mvhevc,
-		} => {
-			let output = output.unwrap_or_else(|| generate_output_path(&input, "photo"));
+	let media_type = detect_media_type(&cli.input);
+	let output = cli
+		.output
+		.unwrap_or_else(|| generate_output_path(&cli.input, &media_type));
 
-			let config = SpatialConfig {
-				encoder_size: model,
-				max_disparity,
-				target_depth_size: 518,
-			};
+	let config = SpatialConfig {
+		encoder_size: cli.model.clone(),
+		max_disparity: cli.max_disparity,
+		target_depth_size: 518,
+	};
 
-			let layout = match format.as_str() {
+	match media_type {
+		MediaType::Photo => {
+			let layout = match cli.format.as_str() {
 				"sbs" => OutputFormat::SideBySide,
 				"tab" => OutputFormat::TopAndBottom,
 				"sep" => OutputFormat::Separate,
 				_ => {
-					eprintln!("Invalid format '{}'. Use: sbs, tab, or sep", format);
+					eprintln!("Invalid format '{}'. Use: sbs, tab, or sep", cli.format);
 					std::process::exit(1);
 				}
 			};
 
 			let output_options = OutputOptions {
 				layout,
-				image_format: ImageEncoding::Jpeg { quality },
-				mvhevc: if mvhevc {
+				image_format: ImageEncoding::Jpeg {
+					quality: cli.quality,
+				},
+				mvhevc: if cli.mvhevc {
 					Some(MVHEVCConfig {
 						spatial_cli_path: None,
 						enabled: true,
-						quality,
+						quality: cli.quality,
 						keep_intermediate: false,
 					})
 				} else {
@@ -121,34 +113,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 				},
 			};
 
-			eprintln!("Processing photo: {:?}", input);
-			eprintln!("Model: {}, Max disparity: {}, Format: {}", config.encoder_size, max_disparity, format);
+			eprintln!("Processing photo: {:?}", cli.input);
+			eprintln!(
+				"Model: {}, Max disparity: {}, Format: {}",
+				config.encoder_size, cli.max_disparity, cli.format
+			);
 
-			process_photo(&input, &output, config, output_options).await?;
+			process_photo(&cli.input, &output, config, output_options).await?;
 
 			eprintln!("✓ Saved to: {:?}", output);
 		}
-		Commands::Video {
-			input,
-			output,
-			model,
-			max_disparity,
-		} => {
-			let output = output.unwrap_or_else(|| generate_output_path(&input, "video"));
-
-			let config = SpatialConfig {
-				encoder_size: model,
-				max_disparity,
-				target_depth_size: 518,
-			};
-
-			eprintln!("Processing video: {:?}", input);
-			eprintln!("Model: {}, Max disparity: {}", config.encoder_size, max_disparity);
+		MediaType::Video => {
+			eprintln!("Processing video: {:?}", cli.input);
+			eprintln!(
+				"Model: {}, Max disparity: {}",
+				config.encoder_size, cli.max_disparity
+			);
 
 			let start = std::time::Instant::now();
 
 			process_video(
-				&input,
+				&cli.input,
 				&output,
 				config,
 				Some(Box::new(|progress: VideoProgress| {
