@@ -13,19 +13,28 @@ Convert 2D images and videos to stereoscopic 3D spatial content for Apple Vision
 - **Multi-format input** — JPEG, PNG, AVIF, JPEG XL, HEIC via native decoders or ffmpeg
 - **MV-HEVC output** — Side-by-side, top-and-bottom, or separate stereo pairs with optional MV-HEVC packaging
 
+## 🚧 massively under construction 🧱
+
 ## Quick Start
 
 ### Install the CLI
 
-```bash
+```sh
 cargo install spatial-maker
 ```
+
+for the latest code (untested)
+
+```sh
+cargo install --git https://github.com/mrgnw/spatial-maker --force
+```
+
+
 
 ### Convert a Video
 
 ```bash
 INPUT_VIDEO=~/Movies/my-video.mp4
-OUTPUT_VIDEO=~/Desktop/spatial-video.mp4
 MODEL=b  # s (small), b (base), or l (large)
 
 spatial-maker video "$INPUT_VIDEO" -o "$OUTPUT_VIDEO" --model "$MODEL"
@@ -35,11 +44,10 @@ spatial-maker video "$INPUT_VIDEO" -o "$OUTPUT_VIDEO" --model "$MODEL"
 
 ```bash
 INPUT_PHOTO=~/Pictures/photo.jpg
-OUTPUT_PHOTO=~/Desktop/spatial-photo.jpg
 MODEL=b
 MAX_DISPARITY=30  # Higher = more 3D depth
 
-spatial-maker photo "$INPUT_PHOTO" -o "$OUTPUT_PHOTO" \
+spatial-maker photo "$INPUT_PHOTO"
   --model "$MODEL" \
   --max-disparity "$MAX_DISPARITY"
 ```
