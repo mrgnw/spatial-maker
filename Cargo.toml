@@ -25,6 +25,8 @@ exclude = [
 	"pyproject.toml",
 	"uv.lock",
 	"pipeline.py",
+	"CLAUDE.md",
+	"COREML_IMPLEMENTATION.md",
 ]
 
 [lib]
