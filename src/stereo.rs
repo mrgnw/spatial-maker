@@ -1,87 +1,115 @@
-use anyhow::Result;
-use image::{DynamicImage, ImageBuffer, Luma, Rgb, RgbImage};
+use crate::error::SpatialResult;
+use image::{DynamicImage, ImageBuffer, Rgb};
+use ndarray::Array2;
 
-/// Create left and right eye views from RGB frame and depth map using DIBR
-///
-/// This ports the `create_stereo_pair` function from depth_to_stereo.py
-pub fn create_stereo_pair(
-    rgb_frame: &DynamicImage,
-    depth_frame: &ImageBuffer<Luma<f32>, Vec<f32>>,
-    max_disparity: f32,
-) -> Result<(RgbImage, RgbImage)> {
-    let rgb = rgb_frame.to_rgb8();
-    let (width, height) = rgb.dimensions();
+pub fn generate_stereo_pair(
+	image: &DynamicImage,
+	depth: &Array2<f32>,
+	max_disparity: u32,
+) -> SpatialResult<(DynamicImage, DynamicImage)> {
+	let img_rgb = image.to_rgb8();
+	let width = img_rgb.width() as usize;
+	let height = img_rgb.height() as usize;
 
-    // Create disparity map (closer = higher value = more shift)
-    let disparity: Vec<f32> = depth_frame.pixels().map(|p| p[0] * max_disparity).collect();
+	let mut right_rgb: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(width as u32, height as u32);
 
-    let left_eye = remap_image(&rgb, &disparity, width, height, 0.5)?;
-    let right_eye = remap_image(&rgb, &disparity, width, height, -0.5)?;
+	let bg = Rgb([64u8, 64u8, 64u8]);
+	for pixel in right_rgb.pixels_mut() {
+		*pixel = bg;
+	}
 
-    Ok((left_eye, right_eye))
+	for y in 0..height {
+		for x in 0..width {
+			let depth_val = get_depth_at(depth, x, y, width, height);
+			let disparity = (depth_val * max_disparity as f32).round() as i32;
+			let x_right = x as i32 - disparity;
+
+			if x_right >= 0 && x_right < width as i32 {
+				if let Some(pixel) = img_rgb.get_pixel_checked(x as u32, y as u32) {
+					right_rgb.put_pixel(x_right as u32, y as u32, *pixel);
+				}
+			}
+		}
+	}
+
+	fill_disocclusions(&mut right_rgb);
+
+	let left_image = image.clone();
+	let right_image = DynamicImage::ImageRgb8(right_rgb);
+
+	Ok((left_image, right_image))
 }
 
-/// Remap an image based on disparity values
-///
-/// This is equivalent to cv2.remap with INTER_LINEAR and BORDER_REPLICATE
-fn remap_image(
-    source: &RgbImage,
-    disparity: &[f32],
-    width: u32,
-    height: u32,
-    shift_factor: f32,
-) -> Result<RgbImage> {
-    let mut output = ImageBuffer::new(width, height);
+fn get_depth_at(
+	depth: &Array2<f32>,
+	x: usize,
+	y: usize,
+	img_width: usize,
+	img_height: usize,
+) -> f32 {
+	let (depth_height, depth_width) = depth.dim();
 
-    for y in 0..height {
-        for x in 0..width {
-            let idx = (y * width + x) as usize;
-            let shift = disparity[idx] * shift_factor;
-            let src_x = x as f32 + shift;
+	if depth_height == img_height && depth_width == img_width {
+		depth[[y, x]]
+	} else {
+		let scaled_x = (x as f32 * depth_width as f32 / img_width as f32)
+			.min(depth_width as f32 - 1.0) as usize;
+		let scaled_y = (y as f32 * depth_height as f32 / img_height as f32)
+			.min(depth_height as f32 - 1.0) as usize;
 
-            // Bilinear interpolation
-            let pixel = sample_bilinear(source, src_x, y as f32);
-            output.put_pixel(x, y, pixel);
-        }
-    }
-
-    Ok(output)
+		if scaled_y < depth_height && scaled_x < depth_width {
+			depth[[scaled_y, scaled_x]]
+		} else {
+			0.5
+		}
+	}
 }
 
-/// Sample a pixel using bilinear interpolation
-fn sample_bilinear(image: &RgbImage, x: f32, y: f32) -> Rgb<u8> {
-    let (width, height) = image.dimensions();
+fn fill_disocclusions(image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>) {
+	let width = image.width() as usize;
+	let height = image.height() as usize;
+	let bg = Rgb([64u8, 64u8, 64u8]);
 
-    // Clamp to image bounds (BORDER_REPLICATE)
-    let x_clamped = x.clamp(0.0, (width - 1) as f32);
-    let y_clamped = y.clamp(0.0, (height - 1) as f32);
+	let original = image.clone();
 
-    let x0 = x_clamped.floor() as u32;
-    let x1 = (x0 + 1).min(width - 1);
-    let y0 = y_clamped.floor() as u32;
-    let y1 = (y0 + 1).min(height - 1);
+	for y in 0..height {
+		for x in 0..width {
+			let pixel = original.get_pixel(x as u32, y as u32);
+			if pixel[0] == bg[0] && pixel[1] == bg[1] && pixel[2] == bg[2] {
+				if let Some(nearest) = find_nearest_valid(&original, x, y, bg) {
+					image.put_pixel(x as u32, y as u32, nearest);
+				}
+			}
+		}
+	}
+}
 
-    let fx = x_clamped - x0 as f32;
-    let fy = y_clamped - y0 as f32;
+fn find_nearest_valid(
+	image: &ImageBuffer<Rgb<u8>, Vec<u8>>,
+	cx: usize,
+	cy: usize,
+	bg: Rgb<u8>,
+) -> Option<Rgb<u8>> {
+	let width = image.width() as usize;
+	let height = image.height() as usize;
 
-    let p00 = image.get_pixel(x0, y0);
-    let p10 = image.get_pixel(x1, y0);
-    let p01 = image.get_pixel(x0, y1);
-    let p11 = image.get_pixel(x1, y1);
+	for radius in 1..=20 {
+		for dy in -(radius as i32)..=(radius as i32) {
+			for dx in -(radius as i32)..=(radius as i32) {
+				if dx.abs() != radius as i32 && dy.abs() != radius as i32 {
+					continue;
+				}
+				let nx = (cx as i32 + dx) as usize;
+				let ny = (cy as i32 + dy) as usize;
+				if nx < width && ny < height {
+					let pixel = image.get_pixel(nx as u32, ny as u32);
+					if pixel[0] != bg[0] || pixel[1] != bg[1] || pixel[2] != bg[2] {
+						return Some(*pixel);
+					}
+				}
+			}
+		}
+	}
 
-    let mut result = [0u8; 3];
-    for c in 0..3 {
-        let v00 = p00[c] as f32;
-        let v10 = p10[c] as f32;
-        let v01 = p01[c] as f32;
-        let v11 = p11[c] as f32;
-
-        let v0 = v00 * (1.0 - fx) + v10 * fx;
-        let v1 = v01 * (1.0 - fx) + v11 * fx;
-        let v = v0 * (1.0 - fy) + v1 * fy;
-
-        result[c] = v.round().clamp(0.0, 255.0) as u8;
-    }
-
-    Rgb(result)
+	None
 }

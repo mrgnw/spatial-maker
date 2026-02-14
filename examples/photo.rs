@@ -1,52 +1,42 @@
-use anyhow::Result;
 use clap::Parser;
-use spatial_maker::{create_stereo_pair, model, output, DepthEstimator};
+use spatial_maker::{generate_stereo_pair, model, output, OnnxDepthEstimator};
 
 #[derive(Parser)]
-#[command(name = "spatial-maker-photo")]
-#[command(about = "Convert a 2D photo to side-by-side stereo", long_about = None)]
+#[command(name = "spatial-maker-onnx")]
+#[command(about = "Convert a 2D photo to side-by-side stereo using ONNX Runtime")]
 struct Args {
-    /// Input image file
-    input: String,
+	input: String,
 
-    /// Output image file
-    #[arg(short, long)]
-    output: String,
+	#[arg(short, long)]
+	output: String,
 
-    /// Maximum pixel disparity for 3D effect (default: 30)
-    #[arg(long, default_value = "30.0")]
-    max_disparity: f32,
+	#[arg(long, default_value = "30")]
+	max_disparity: u32,
 
-    /// Model checkpoint name (default: depth_anything_v2_vits.onnx)
-    #[arg(long, default_value = "depth_anything_v2_vits.onnx")]
-    model: String,
+	#[arg(long, default_value = "s")]
+	encoder_size: String,
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+	let args = Args::parse();
 
-    println!("Loading image: {}", args.input);
-    let input_image = image::open(&args.input)?;
+	let input_image = image::open(&args.input)?;
 
-    println!("Finding model checkpoint: {}", args.model);
-    let model_path = model::find_checkpoint(&args.model)?;
-    println!("Using model: {}", model_path.display());
+	let model_path = model::find_model(&args.encoder_size)?;
 
-    println!("Initializing depth estimator...");
-    let mut estimator = DepthEstimator::new(model_path.to_str().unwrap())?;
+	let estimator = OnnxDepthEstimator::new(model_path.to_str().unwrap())?;
 
-    println!("Estimating depth...");
-    let depth_map = estimator.estimate(&input_image)?;
+	let start = std::time::Instant::now();
+	let depth_map = estimator.estimate(&input_image)?;
+	let depth_time = start.elapsed();
+	eprintln!("Depth estimation: {:?}", depth_time);
 
-    println!("Creating stereo pair...");
-    let (left, right) = create_stereo_pair(&input_image, &depth_map, args.max_disparity)?;
+	let (left, right) = generate_stereo_pair(&input_image, &depth_map, args.max_disparity)?;
 
-    println!("Creating SBS image...");
-    let sbs = output::create_sbs_image(left, right);
+	let sbs = output::create_sbs_image(&left, &right);
+	sbs.save(&args.output)?;
 
-    println!("Saving to: {}", args.output);
-    sbs.save(&args.output)?;
+	eprintln!("Total time: {:?}", start.elapsed());
 
-    println!("Done!");
-    Ok(())
+	Ok(())
 }
