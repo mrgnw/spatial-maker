@@ -1,0 +1,19 @@
+[package]
+name = "spatial-maker"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Convert 2D images and videos to stereoscopic 3D spatial content for Apple Vision Pro using AI depth estimation"
+keywords = ["spatial-video", "3d", "stereoscopic", "apple-vision-pro", "depth-estimation"]
+
+[dependencies]
+ort = { version = "2.0.0-rc.11", features = ["coreml", "ndarray", "half", "download-binaries"] }
+image = "0.25"
+ndarray = "0.17"
+anyhow = "1.0"
+dirs = "5.0"
+
+[build-dependencies]
+
+[dev-dependencies]
+clap = { version = "4", features = ["derive"] }
