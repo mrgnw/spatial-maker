@@ -9,6 +9,13 @@ use std::path::PathBuf;
 #[command(name = "spatial-maker")]
 #[command(about = "Convert 2D images and videos to stereoscopic 3D spatial content")]
 #[command(version)]
+#[command(long_version = format!(
+	"{}\nInstalled via: {}\nBuild: {} ({})",
+	env!("CARGO_PKG_VERSION"),
+	option_env!("CARGO_HOME").map(|_| "cargo install").unwrap_or("local build"),
+	env!("CARGO_PKG_NAME"),
+	env!("CARGO_PKG_REPOSITORY")
+))]
 struct Cli {
 	/// Input image or video file
 	input: PathBuf,
