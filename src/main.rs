@@ -15,14 +15,15 @@ use std::path::PathBuf;
 	env!("CARGO_PKG_REPOSITORY")
 ))]
 struct Cli {
-	/// Input image or video file
-	input: PathBuf,
+	/// Input image or video files
+	#[arg(required = true)]
+	inputs: Vec<PathBuf>,
 
-	/// Output file (defaults to input path with -spatial suffix)
+	/// Output file (only valid with a single input)
 	#[arg(short, long)]
 	output: Option<PathBuf>,
 
-	/// Model size: s (small, 48MB), b (base, 186MB), l (large, 638GB)
+	/// Model size: s (small, 48MB), b (base, 186MB), l (large, 638MB)
 	#[arg(short, long, default_value = "s")]
 	model: String,
 
@@ -65,29 +66,35 @@ fn detect_media_type(path: &PathBuf) -> MediaType {
 
 fn generate_output_path(input: &PathBuf, media_type: &MediaType) -> PathBuf {
 	let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-	let extension = input.extension().and_then(|s| s.to_str()).unwrap_or(match media_type {
-		MediaType::Video => "mp4",
-		MediaType::Photo => "jpg",
-	});
+	let src_ext = input
+		.extension()
+		.and_then(|s| s.to_str())
+		.unwrap_or("")
+		.to_lowercase();
+
+	let extension = match media_type {
+		MediaType::Video => match src_ext.as_str() {
+			"" => "mp4",
+			other => other,
+		},
+		MediaType::Photo => match src_ext.as_str() {
+			"heic" | "heif" | "avif" | "jxl" => "jpg",
+			"" => "jpg",
+			_ => &src_ext,
+		},
+	};
 
 	let parent = input.parent().unwrap_or_else(|| std::path::Path::new("."));
 	parent.join(format!("{}-spatial.{}", stem, extension))
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-	let cli = Cli::parse();
-
-	let media_type = detect_media_type(&cli.input);
-	let output = cli
-		.output
-		.unwrap_or_else(|| generate_output_path(&cli.input, &media_type));
-
-	let config = SpatialConfig {
-		encoder_size: cli.model.clone(),
-		max_disparity: cli.max_disparity,
-		target_depth_size: 518,
-	};
+async fn process_single(
+	input: &PathBuf,
+	output: PathBuf,
+	config: SpatialConfig,
+	cli: &Cli,
+) -> Result<(), Box<dyn std::error::Error>> {
+	let media_type = detect_media_type(input);
 
 	match media_type {
 		MediaType::Photo => {
@@ -118,27 +125,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 				},
 			};
 
-			eprintln!("Processing photo: {:?}", cli.input);
-			eprintln!(
-				"Model: {}, Max disparity: {}, Format: {}",
-				config.encoder_size, cli.max_disparity, cli.format
-			);
-
-			process_photo(&cli.input, &output, config, output_options).await?;
-
-			eprintln!("✓ Saved to: {:?}", output);
+			eprintln!("Processing photo: {:?}", input);
+			process_photo(input, &output, config, output_options).await?;
+			eprintln!("Saved to: {:?}", output);
 		}
 		MediaType::Video => {
-			eprintln!("Processing video: {:?}", cli.input);
-			eprintln!(
-				"Model: {}, Max disparity: {}",
-				config.encoder_size, cli.max_disparity
-			);
-
+			eprintln!("Processing video: {:?}", input);
 			let start = std::time::Instant::now();
 
 			process_video(
-				&cli.input,
+				input,
 				&output,
 				config,
 				Some(Box::new(|progress: VideoProgress| {
@@ -151,9 +147,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 			.await?;
 
 			eprintln!();
-			eprintln!("✓ Saved to: {:?}", output);
+			eprintln!("Saved to: {:?}", output);
 			eprintln!("Total time: {:.1}s", start.elapsed().as_secs_f64());
 		}
+	}
+
+	Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+	let cli = Cli::parse();
+
+	if cli.output.is_some() && cli.inputs.len() > 1 {
+		eprintln!("--output cannot be used with multiple inputs");
+		std::process::exit(1);
+	}
+
+	let config = SpatialConfig {
+		encoder_size: cli.model.clone(),
+		max_disparity: cli.max_disparity,
+		target_depth_size: 518,
+	};
+
+	let total = cli.inputs.len();
+	let mut errors = Vec::new();
+
+	for (i, input) in cli.inputs.iter().enumerate() {
+		if total > 1 {
+			eprintln!("[{}/{}]", i + 1, total);
+		}
+
+		let media_type = detect_media_type(input);
+		let output = cli
+			.output
+			.clone()
+			.unwrap_or_else(|| generate_output_path(input, &media_type));
+
+		if let Err(e) = process_single(input, output, config.clone(), &cli).await {
+			eprintln!("Error processing {:?}: {}", input, e);
+			errors.push((input.clone(), e));
+		}
+	}
+
+	if !errors.is_empty() {
+		eprintln!("\n{}/{} files failed", errors.len(), total);
+		std::process::exit(1);
 	}
 
 	Ok(())
