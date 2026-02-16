@@ -1,6 +1,6 @@
 [package]
 name = "spatial-maker"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "MIT"
 description = "Convert 2D images and videos to stereoscopic 3D spatial content for Apple Vision Pro using AI depth estimation"
@@ -55,6 +55,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 ndarray = "0.16"
 thiserror = "2"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 reqwest = { version = "0.12", features = ["stream"] }
 futures-util = "0.3"
@@ -75,6 +76,11 @@ optional = true
 
 [dev-dependencies]
 tempfile = "3.8"
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }.tar.gz"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
 
 [[example]]
 name = "photo_coreml"

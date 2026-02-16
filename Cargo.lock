@@ -2218,7 +2218,7 @@ dependencies = [
 
 [[package]]
 name = "spatial-maker"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "dirs",
@@ -2230,6 +2230,7 @@ dependencies = [
  "ort",
  "reqwest",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

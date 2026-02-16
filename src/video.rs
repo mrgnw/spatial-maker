@@ -45,20 +45,18 @@ pub struct VideoMetadata {
 pub type ProgressCallback = Box<dyn Fn(VideoProgress) + Send + Sync>;
 
 pub async fn get_video_metadata(input_path: &Path) -> SpatialResult<VideoMetadata> {
+	let input_str = input_path
+		.to_str()
+		.ok_or_else(|| SpatialError::Other("Invalid input path encoding".to_string()))?;
+
 	let output = Command::new("ffprobe")
 		.args([
-			"-v",
-			"error",
-			"-select_streams",
-			"v:0",
-			"-count_frames",
-			"-show_entries",
-			"stream=width,height,r_frame_rate,nb_read_frames,duration",
-			"-show_entries",
-			"format=duration",
-			"-of",
-			"csv=p=0",
-			input_path.to_str().unwrap(),
+			"-v", "error",
+			"-select_streams", "v:0",
+			"-show_entries", "stream=width,height,r_frame_rate,nb_frames,duration",
+			"-show_entries", "format=duration",
+			"-of", "json",
+			input_str,
 		])
 		.output()
 		.await
@@ -75,51 +73,56 @@ pub async fn get_video_metadata(input_path: &Path) -> SpatialResult<VideoMetadat
 	}
 
 	let stdout = String::from_utf8_lossy(&output.stdout);
-	let parts: Vec<&str> = stdout.trim().split(',').collect();
+	let json: serde_json::Value = serde_json::from_str(&stdout)
+		.map_err(|e| SpatialError::Other(format!("Failed to parse ffprobe JSON: {}", e)))?;
 
-	if parts.len() < 4 {
-		return Err(SpatialError::Other(format!(
-			"Unexpected ffprobe output: {}",
-			stdout
-		)));
-	}
+	let stream = json["streams"]
+		.as_array()
+		.and_then(|s| s.first())
+		.ok_or_else(|| SpatialError::Other("No video stream found".to_string()))?;
 
-	let width = parts[0]
-		.parse::<u32>()
-		.map_err(|_| SpatialError::Other("Failed to parse width".to_string()))?;
-	let height = parts[1]
-		.parse::<u32>()
-		.map_err(|_| SpatialError::Other("Failed to parse height".to_string()))?;
+	let width = stream["width"]
+		.as_u64()
+		.ok_or_else(|| SpatialError::Other("Failed to parse width".to_string()))? as u32;
+	let height = stream["height"]
+		.as_u64()
+		.ok_or_else(|| SpatialError::Other("Failed to parse height".to_string()))? as u32;
 
-	let fps = if parts[2].contains('/') {
-		let fps_parts: Vec<&str> = parts[2].split('/').collect();
-		let num: f64 = fps_parts[0].parse().unwrap_or(30.0);
-		let den: f64 = fps_parts[1].parse().unwrap_or(1.0);
-		num / den
-	} else {
-		parts[2].parse().unwrap_or(30.0)
-	};
+	let fps = stream["r_frame_rate"]
+		.as_str()
+		.map(|s| {
+			if let Some((num, den)) = s.split_once('/') {
+				let n: f64 = num.parse().unwrap_or(30.0);
+				let d: f64 = den.parse().unwrap_or(1.0);
+				n / d
+			} else {
+				s.parse().unwrap_or(30.0)
+			}
+		})
+		.unwrap_or(30.0);
 
-	let total_frames = parts[3]
-		.parse::<u32>()
-		.map_err(|_| SpatialError::Other("Failed to parse frame count".to_string()))?;
-
-	let duration = parts
-		.get(4)
+	let duration = stream["duration"]
+		.as_str()
 		.and_then(|s| s.parse::<f64>().ok())
-		.unwrap_or(total_frames as f64 / fps);
+		.or_else(|| {
+			json["format"]["duration"]
+				.as_str()
+				.and_then(|s| s.parse::<f64>().ok())
+		})
+		.unwrap_or(0.0);
+
+	let total_frames = stream["nb_frames"]
+		.as_str()
+		.and_then(|s| s.parse::<u32>().ok())
+		.unwrap_or_else(|| (duration * fps).round() as u32);
 
 	let audio_output = Command::new("ffprobe")
 		.args([
-			"-v",
-			"error",
-			"-select_streams",
-			"a:0",
-			"-show_entries",
-			"stream=codec_type",
-			"-of",
-			"csv=p=0",
-			input_path.to_str().unwrap(),
+			"-v", "error",
+			"-select_streams", "a:0",
+			"-show_entries", "stream=codec_type",
+			"-of", "csv=p=0",
+			input_str,
 		])
 		.output()
 		.await
