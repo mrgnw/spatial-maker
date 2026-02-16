@@ -4,15 +4,13 @@ use ndarray::Array2;
 use std::ffi::CString;
 
 const INPUT_SIZE: u32 = 518;
-const IMAGENET_MEAN: [f32; 3] = [0.485, 0.456, 0.406];
-const IMAGENET_STD: [f32; 3] = [0.229, 0.224, 0.225];
 
 extern "C" {
 	fn coreml_load_model(path: *const std::os::raw::c_char) -> *mut std::os::raw::c_void;
 	fn coreml_unload_model(model: *mut std::os::raw::c_void);
 	fn coreml_infer_depth(
 		model: *mut std::os::raw::c_void,
-		rgb_data: *const f32,
+		rgb_data: *const u8,
 		width: i32,
 		height: i32,
 		output: *mut f32,
@@ -52,14 +50,7 @@ impl CoreMLDepthEstimator {
 		);
 
 		let rgb = resized.to_rgb8();
-		let mut input_data = Vec::with_capacity(3 * INPUT_SIZE as usize * INPUT_SIZE as usize);
-
-		for c in 0..3 {
-			for pixel in rgb.pixels() {
-				let normalized = (pixel[c] as f32 / 255.0 - IMAGENET_MEAN[c]) / IMAGENET_STD[c];
-				input_data.push(normalized);
-			}
-		}
+		let input_data: Vec<u8> = rgb.as_raw().to_vec();
 
 		let output_size = (INPUT_SIZE * INPUT_SIZE) as usize;
 		let mut output_data = vec![0.0f32; output_size];
