@@ -73,10 +73,7 @@ fn generate_output_path(input: &PathBuf, media_type: &MediaType) -> PathBuf {
 		.to_lowercase();
 
 	let extension = match media_type {
-		MediaType::Video => match src_ext.as_str() {
-			"" => "mp4",
-			other => other,
-		},
+		MediaType::Video => "mov",
 		MediaType::Photo => match src_ext.as_str() {
 			"heic" | "heif" | "avif" | "jxl" => "jpg",
 			"" => "jpg",

@@ -288,6 +288,84 @@ async fn encode_stereo_video(
 	Ok(())
 }
 
+fn is_spatial_cli_available() -> bool {
+	std::process::Command::new("spatial")
+		.arg("--version")
+		.output()
+		.map(|o| o.status.success())
+		.unwrap_or(false)
+}
+
+async fn encode_mvhevc_video(
+	sbs_path: &Path,
+	output_path: &Path,
+	input_path: &Path,
+	metadata: &VideoMetadata,
+) -> SpatialResult<()> {
+	let sbs_str = sbs_path.to_str()
+		.ok_or_else(|| SpatialError::Other("Invalid SBS path".to_string()))?;
+	let output_str = output_path.to_str()
+		.ok_or_else(|| SpatialError::Other("Invalid output path".to_string()))?;
+
+	let mut args = vec![
+		"make",
+		"--input", sbs_str,
+		"--output", output_str,
+		"--format", "sbs",
+		"--cdist", "65",
+		"--hfov", "90",
+		"--hadjust", "0",
+		"--projection", "rect",
+		"--overwrite",
+	];
+
+	if !metadata.has_audio {
+		args.push("--no-audio");
+	}
+
+	let output = Command::new("spatial")
+		.args(&args)
+		.output()
+		.await
+		.map_err(|e| SpatialError::Other(format!("Failed to run spatial CLI: {}", e)))?;
+
+	if !output.status.success() {
+		let stderr = String::from_utf8_lossy(&output.stderr);
+		return Err(SpatialError::Other(format!("spatial make failed: {}", stderr)));
+	}
+
+	if metadata.has_audio {
+		let input_str = input_path.to_str()
+			.ok_or_else(|| SpatialError::Other("Invalid input path".to_string()))?;
+
+		let with_audio_path = output_path.with_extension("tmp.mov");
+		let with_audio_str = with_audio_path.to_str()
+			.ok_or_else(|| SpatialError::Other("Invalid temp path".to_string()))?;
+
+		let mux_output = Command::new("ffmpeg")
+			.args([
+				"-i", output_str,
+				"-i", input_str,
+				"-c:v", "copy",
+				"-c:a", "aac",
+				"-map", "0:v:0",
+				"-map", "1:a:0",
+				"-y", with_audio_str,
+			])
+			.output()
+			.await
+			.map_err(|e| SpatialError::Other(format!("Failed to mux audio: {}", e)))?;
+
+		if mux_output.status.success() {
+			let _ = tokio::fs::remove_file(output_path).await;
+			tokio::fs::rename(&with_audio_path, output_path).await
+				.map_err(|e| SpatialError::IoError(format!("Failed to rename muxed file: {}", e)))?;
+		}
+	}
+
+	Ok(())
+}
+
 pub async fn process_video(
 	input_path: &Path,
 	output_path: &Path,
@@ -302,6 +380,20 @@ pub async fn process_video(
 	}
 
 	let metadata = get_video_metadata(input_path).await?;
+	let use_spatial = is_spatial_cli_available();
+
+	let sbs_path = if use_spatial {
+		let temp_dir = std::env::temp_dir();
+		temp_dir.join(format!(
+			"spatial_maker_sbs_{}.mov",
+			std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_millis()
+		))
+	} else {
+		output_path.to_path_buf()
+	};
 
 	crate::model::ensure_model_exists::<fn(u64, u64)>(&config.encoder_size, None).await?;
 
@@ -319,7 +411,7 @@ pub async fn process_video(
 	let (processed_tx, processed_rx) = mpsc::channel::<(DynamicImage, DynamicImage)>(10);
 
 	let encode_handle = tokio::spawn(encode_stereo_video(
-		output_path.to_path_buf(),
+		sbs_path.clone(),
 		metadata.clone(),
 		processed_rx,
 	));
@@ -352,8 +444,6 @@ pub async fn process_video(
 		let depth_map = {
 			#[cfg(feature = "onnx")]
 			{
-				// For ONNX, we'd need to cache the estimator too
-				// For now, this is a placeholder - ONNX video is not the primary path
 				let model_path = crate::model::find_model(&config.encoder_size)?;
 				let est = crate::depth::OnnxDepthEstimator::new(model_path.to_str().unwrap())?;
 				est.estimate(&frame)?
@@ -388,6 +478,20 @@ pub async fn process_video(
 	encode_handle
 		.await
 		.map_err(|e| SpatialError::Other(format!("Encoding task failed: {}", e)))??;
+
+	if use_spatial {
+		if let Some(ref cb) = progress_cb {
+			cb(VideoProgress::new(
+				total_frames,
+				total_frames,
+				"packaging".to_string(),
+			));
+		}
+
+		let result = encode_mvhevc_video(&sbs_path, output_path, input_path, &metadata).await;
+		let _ = tokio::fs::remove_file(&sbs_path).await;
+		result?;
+	}
 
 	if let Some(ref cb) = progress_cb {
 		cb(VideoProgress::new(

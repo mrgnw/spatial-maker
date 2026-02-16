@@ -200,6 +200,14 @@ where
 		.await
 		.map_err(|e| SpatialError::Other(format!("Failed to download model: {}", e)))?;
 
+	if !response.status().is_success() {
+		return Err(SpatialError::Other(format!(
+			"Failed to download model: HTTP {} from {}",
+			response.status(),
+			metadata.url
+		)));
+	}
+
 	let total_bytes = response
 		.content_length()
 		.unwrap_or(metadata.size_mb as u64 * 1_000_000);
