@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use spatial_maker::{
 	process_photo, process_video, ImageEncoding, MVHEVCConfig, OutputFormat, OutputOptions,
 	SpatialConfig, VideoProgress,
@@ -15,8 +15,10 @@ use std::path::PathBuf;
 	env!("CARGO_PKG_REPOSITORY")
 ))]
 struct Cli {
+	#[command(subcommand)]
+	command: Option<Commands>,
+
 	/// Input image or video files
-	#[arg(required = true)]
 	inputs: Vec<PathBuf>,
 
 	/// Output file (only valid with a single input)
@@ -42,6 +44,22 @@ struct Cli {
 	/// Enable MV-HEVC packaging for photos (requires 'spatial' CLI in PATH)
 	#[arg(long)]
 	mvhevc: bool,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+	/// Update spatial-maker to the latest release
+	#[command(name = "self")]
+	Self_ {
+		#[command(subcommand)]
+		action: SelfAction,
+	},
+}
+
+#[derive(Subcommand)]
+enum SelfAction {
+	/// Download and install the latest release
+	Update,
 }
 
 enum MediaType {
@@ -156,6 +174,16 @@ async fn process_single(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let cli = Cli::parse();
 
+	if let Some(Commands::Self_ { action: SelfAction::Update }) = cli.command {
+		return self_update().await;
+	}
+
+	if cli.inputs.is_empty() {
+		eprintln!("No input files provided. Usage: spatial-maker <files...>");
+		eprintln!("Run 'spatial-maker --help' for more information.");
+		std::process::exit(1);
+	}
+
 	if cli.output.is_some() && cli.inputs.len() > 1 {
 		eprintln!("--output cannot be used with multiple inputs");
 		std::process::exit(1);
@@ -193,4 +221,155 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	}
 
 	Ok(())
+}
+
+async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
+	let current_version = env!("CARGO_PKG_VERSION");
+	let repo = "mrgnw/spatial-maker";
+
+	eprintln!("Current version: v{}", current_version);
+	eprintln!("Checking for updates...");
+
+	let client = reqwest::Client::new();
+
+	// Get latest release from GitHub API
+	let release: serde_json::Value = client
+		.get(format!("https://api.github.com/repos/{}/releases/latest", repo))
+		.header("User-Agent", "spatial-maker")
+		.send()
+		.await?
+		.json()
+		.await?;
+
+	let latest_tag = release["tag_name"]
+		.as_str()
+		.ok_or("Could not find latest release tag")?;
+	let latest_version = latest_tag.trim_start_matches('v');
+
+	if !is_newer_version(current_version, latest_version) {
+		eprintln!("Already up to date (v{})", current_version);
+		return Ok(());
+	}
+
+	eprintln!("New version available: v{} -> v{}", current_version, latest_version);
+
+	// Determine current arch
+	let target = if cfg!(target_arch = "aarch64") {
+		"aarch64-apple-darwin"
+	} else if cfg!(target_arch = "x86_64") {
+		"x86_64-apple-darwin"
+	} else {
+		return Err("Unsupported architecture".into());
+	};
+
+	let asset_name = format!("spatial-maker-{}-{}.tar.gz", latest_tag, target);
+
+	// Find the download URL from release assets
+	let assets = release["assets"]
+		.as_array()
+		.ok_or("No assets in release")?;
+
+	let download_url = assets
+		.iter()
+		.find(|a| a["name"].as_str() == Some(&asset_name))
+		.and_then(|a| a["browser_download_url"].as_str())
+		.ok_or_else(|| format!("No release asset found for {}", target))?;
+
+	eprintln!("Downloading {}...", asset_name);
+
+	// Download to a temp file
+	let response = client
+		.get(download_url)
+		.header("User-Agent", "spatial-maker")
+		.send()
+		.await?;
+
+	let bytes = response.bytes().await?;
+
+	// Extract the binary from the tarball
+	let decoder = flate2::read::GzDecoder::new(&bytes[..]);
+	let mut archive = tar::Archive::new(decoder);
+
+	let temp_dir = std::env::temp_dir().join("spatial-maker-update");
+	let _ = std::fs::remove_dir_all(&temp_dir);
+	std::fs::create_dir_all(&temp_dir)?;
+
+	archive.unpack(&temp_dir)?;
+
+	let new_binary = temp_dir.join("spatial-maker");
+	if !new_binary.exists() {
+		return Err("Binary not found in release archive".into());
+	}
+
+	// Determine where to install
+	let current_exe = std::env::current_exe()?;
+	let install_path = if is_writable(&current_exe) {
+		current_exe.clone()
+	} else {
+		// Try ~/.local/bin as a user-writable alternative
+		let local_bin = dirs::home_dir()
+			.ok_or("Could not determine home directory")?
+			.join(".local/bin");
+		std::fs::create_dir_all(&local_bin)?;
+		let alt_path = local_bin.join("spatial-maker");
+		eprintln!(
+			"Cannot write to {} (try sudo), installing to {}",
+			current_exe.display(),
+			alt_path.display()
+		);
+		alt_path
+	};
+
+	// Replace the binary atomically: copy new -> rename over old
+	let staging = install_path.with_extension("new");
+	std::fs::copy(&new_binary, &staging)?;
+
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))?;
+	}
+
+	std::fs::rename(&staging, &install_path)?;
+
+	// Cleanup
+	let _ = std::fs::remove_dir_all(&temp_dir);
+
+	eprintln!("Updated to v{} at {}", latest_version, install_path.display());
+
+	// Remind about PATH if installed to ~/.local/bin
+	if install_path != current_exe {
+		eprintln!("Make sure {} is in your PATH", install_path.parent().unwrap().display());
+	}
+
+	Ok(())
+}
+
+fn is_newer_version(current: &str, latest: &str) -> bool {
+	let parse = |v: &str| -> Vec<u32> {
+		v.split('.').filter_map(|s| s.parse().ok()).collect()
+	};
+	let c = parse(current);
+	let l = parse(latest);
+	l > c
+}
+
+fn is_writable(path: &PathBuf) -> bool {
+	if path.exists() {
+		// Try opening for write to test permissions
+		std::fs::OpenOptions::new()
+			.write(true)
+			.open(path)
+			.is_ok()
+	} else {
+		// Check if parent directory is writable
+		path.parent()
+			.map(|p| {
+				let test = p.join(".spatial-maker-write-test");
+				let ok = std::fs::File::create(&test).is_ok();
+				let _ = std::fs::remove_file(&test);
+				ok
+			})
+			.unwrap_or(false)
+	}
 }

@@ -47,7 +47,7 @@ public func unloadModel(_ modelPtr: UnsafeMutableRawPointer) {
 @_cdecl("coreml_infer_depth")
 public func inferDepth(
 	_ modelPtr: UnsafeMutableRawPointer,
-	_ rgbData: UnsafePointer<Float>,
+	_ rgbData: UnsafePointer<UInt8>,
 	_ width: Int32,
 	_ height: Int32,
 	_ outputPtr: UnsafeMutablePointer<Float>
@@ -57,20 +57,44 @@ public func inferDepth(
 	let h = Int(height)
 	
 	do {
-		// Create input MLMultiArray from RGB float data
-		// Input shape: [1, 3, height, width] (NCHW)
-		let inputArray = try MLMultiArray(
-			shape: [1, 3, NSNumber(value: h), NSNumber(value: w)],
-			dataType: .float32
+		// Create CVPixelBuffer from RGB8 data
+		// CoreML expects BGRA format, so we need to convert RGB -> BGRA
+		var pixelBuffer: CVPixelBuffer?
+		let bytesPerRow = w * 4
+		let status = CVPixelBufferCreate(
+			kCFAllocatorDefault,
+			w,
+			h,
+			kCVPixelFormatType_32BGRA,
+			nil,
+			&pixelBuffer
 		)
 		
-		// Copy RGB data into MLMultiArray (NCHW layout)
-		let inputCount = 3 * w * h
-		inputArray.dataPointer.assumingMemoryBound(to: Float.self).update(from: rgbData, count: inputCount)
+		guard status == kCVReturnSuccess, let pixelBuffer = pixelBuffer else {
+			print("Failed to create CVPixelBuffer")
+			return -5
+		}
 		
-		// Run inference
+		// Lock pixel buffer for writing
+		CVPixelBufferLockBaseAddress(pixelBuffer, CVPixelBufferLockFlags(rawValue: 0))
+		defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, CVPixelBufferLockFlags(rawValue: 0)) }
+		
+		let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer)!
+		let bgraData = baseAddress.assumingMemoryBound(to: UInt8.self)
+		
+		// Convert RGB (HWC) to BGRA
+		for i in 0..<(w * h) {
+			let rgbIdx = i * 3
+			let bgraIdx = i * 4
+			bgraData[bgraIdx + 0] = rgbData[rgbIdx + 2]  // B
+			bgraData[bgraIdx + 1] = rgbData[rgbIdx + 1]  // G
+			bgraData[bgraIdx + 2] = rgbData[rgbIdx + 0]  // R
+			bgraData[bgraIdx + 3] = 255                   // A
+		}
+		
+		// Run inference with CVPixelBuffer
 		let inputFeature = try MLDictionaryFeatureProvider(
-			dictionary: ["image": MLFeatureValue(multiArray: inputArray)]
+			dictionary: ["image": MLFeatureValue(pixelBuffer: pixelBuffer)]
 		)
 		
 		let result = try model.prediction(from: inputFeature)
