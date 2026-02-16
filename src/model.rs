@@ -111,6 +111,9 @@ pub fn find_model(encoder_size: &str) -> SpatialResult<PathBuf> {
 			if let Ok(entries) = std::fs::read_dir(dir) {
 				for entry in entries.flatten() {
 					let name = entry.file_name().to_string_lossy().to_string();
+					if name.ends_with(".tar.gz") || name.ends_with(".downloading") {
+						continue;
+					}
 					if name.contains("DepthAnything") || name.contains("depth_anything") {
 						let lower_size = encoder_size.to_lowercase();
 						let name_lower = name.to_lowercase();
@@ -190,6 +193,7 @@ async fn download_model<F>(
 where
 	F: FnMut(u64, u64),
 {
+	eprintln!("Downloading model: {} ({} MB)...", metadata.name, metadata.size_mb);
 	tracing::info!("Downloading model: {} from {}", metadata.name, metadata.url);
 
 	let response = reqwest::get(&metadata.url)
@@ -212,6 +216,7 @@ where
 		let mut stream = response.bytes_stream();
 		use futures_util::StreamExt;
 
+		let mut last_pct: u64 = 0;
 		while let Some(chunk) = stream.next().await {
 			let chunk = chunk.map_err(|e| SpatialError::Other(format!("Download interrupted: {}", e)))?;
 			file.write_all(&chunk)
@@ -221,13 +226,22 @@ where
 			if let Some(ref mut f) = progress_fn {
 				f(downloaded, total_bytes);
 			}
+			if total_bytes > 0 {
+				let pct = downloaded * 100 / total_bytes;
+				if pct != last_pct {
+					last_pct = pct;
+					eprint!("\rDownloading... {}%", pct);
+				}
+			}
 		}
+		eprintln!();
 		drop(file);
 
 		let parent = destination
 			.parent()
 			.ok_or_else(|| SpatialError::IoError("Invalid destination path".to_string()))?;
 
+		eprintln!("Extracting...");
 		let output = std::process::Command::new("tar")
 			.args(&["xzf"])
 			.arg(&temp_path)
@@ -242,6 +256,13 @@ where
 		}
 
 		let _ = tokio::fs::remove_file(&temp_path).await;
+
+		if !destination.exists() {
+			return Err(SpatialError::ModelError(format!(
+				"Extraction succeeded but model not found at {:?}",
+				destination
+			)));
+		}
 	} else {
 		let mut file = tokio::fs::File::create(destination)
 			.await

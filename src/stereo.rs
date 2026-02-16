@@ -12,11 +12,8 @@ pub fn generate_stereo_pair(
 	let height = img_rgb.height() as usize;
 
 	let mut right_rgb: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(width as u32, height as u32);
-
-	let bg = Rgb([64u8, 64u8, 64u8]);
-	for pixel in right_rgb.pixels_mut() {
-		*pixel = bg;
-	}
+	let mut depth_buffer = vec![f32::NEG_INFINITY; width * height];
+	let mut filled = vec![false; width * height];
 
 	for y in 0..height {
 		for x in 0..width {
@@ -25,14 +22,19 @@ pub fn generate_stereo_pair(
 			let x_right = x as i32 - disparity;
 
 			if x_right >= 0 && x_right < width as i32 {
-				if let Some(pixel) = img_rgb.get_pixel_checked(x as u32, y as u32) {
-					right_rgb.put_pixel(x_right as u32, y as u32, *pixel);
+				let idx = y * width + x_right as usize;
+				if depth_val > depth_buffer[idx] {
+					depth_buffer[idx] = depth_val;
+					filled[idx] = true;
+					if let Some(pixel) = img_rgb.get_pixel_checked(x as u32, y as u32) {
+						right_rgb.put_pixel(x_right as u32, y as u32, *pixel);
+					}
 				}
 			}
 		}
 	}
 
-	fill_disocclusions(&mut right_rgb);
+	fill_disocclusions(&mut right_rgb, &filled, width, height);
 
 	let left_image = image.clone();
 	let right_image = DynamicImage::ImageRgb8(right_rgb);
@@ -65,51 +67,43 @@ fn get_depth_at(
 	}
 }
 
-fn fill_disocclusions(image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>) {
-	let width = image.width() as usize;
-	let height = image.height() as usize;
-	let bg = Rgb([64u8, 64u8, 64u8]);
-
+fn fill_disocclusions(
+	image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
+	filled: &[bool],
+	width: usize,
+	height: usize,
+) {
 	let original = image.clone();
 
 	for y in 0..height {
 		for x in 0..width {
-			let pixel = original.get_pixel(x as u32, y as u32);
-			if pixel[0] == bg[0] && pixel[1] == bg[1] && pixel[2] == bg[2] {
-				if let Some(nearest) = find_nearest_valid(&original, x, y, bg) {
-					image.put_pixel(x as u32, y as u32, nearest);
+			if filled[y * width + x] {
+				continue;
+			}
+			// scan left to find nearest filled pixel on same row
+			let mut left_pixel = None;
+			for lx in (0..x).rev() {
+				if filled[y * width + lx] {
+					left_pixel = Some(*original.get_pixel(lx as u32, y as u32));
+					break;
 				}
 			}
-		}
-	}
-}
-
-fn find_nearest_valid(
-	image: &ImageBuffer<Rgb<u8>, Vec<u8>>,
-	cx: usize,
-	cy: usize,
-	bg: Rgb<u8>,
-) -> Option<Rgb<u8>> {
-	let width = image.width() as usize;
-	let height = image.height() as usize;
-
-	for radius in 1..=20 {
-		for dy in -(radius as i32)..=(radius as i32) {
-			for dx in -(radius as i32)..=(radius as i32) {
-				if dx.abs() != radius as i32 && dy.abs() != radius as i32 {
-					continue;
-				}
-				let nx = (cx as i32 + dx) as usize;
-				let ny = (cy as i32 + dy) as usize;
-				if nx < width && ny < height {
-					let pixel = image.get_pixel(nx as u32, ny as u32);
-					if pixel[0] != bg[0] || pixel[1] != bg[1] || pixel[2] != bg[2] {
-						return Some(*pixel);
-					}
+			// scan right
+			let mut right_pixel = None;
+			for rx in (x + 1)..width {
+				if filled[y * width + rx] {
+					right_pixel = Some(*original.get_pixel(rx as u32, y as u32));
+					break;
 				}
 			}
+
+			let fill = match (left_pixel, right_pixel) {
+				(Some(l), Some(_)) => l, // prefer left (background side in DIBR)
+				(Some(l), None) => l,
+				(None, Some(r)) => r,
+				(None, None) => continue,
+			};
+			image.put_pixel(x as u32, y as u32, fill);
 		}
 	}
-
-	None
 }
