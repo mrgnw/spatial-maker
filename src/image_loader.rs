@@ -54,14 +54,12 @@ async fn load_avif(path: &Path) -> SpatialResult<DynamicImage> {
 async fn load_jxl(path: &Path) -> SpatialResult<DynamicImage> {
 	#[cfg(feature = "jxl")]
 	{
-		match load_jxl_native(path) {
-			Ok(img) => return Ok(img),
-			Err(e) => {
-				tracing::warn!("Native JXL decoder failed: {}, falling back to ffmpeg", e);
-			}
-		}
+		return load_jxl_native(path);
 	}
-	load_with_ffmpeg(path, "jxl").await
+	#[cfg(not(feature = "jxl"))]
+	{
+		load_with_ffmpeg(path, "jxl").await
+	}
 }
 
 async fn load_heic(path: &Path) -> SpatialResult<DynamicImage> {

@@ -39,7 +39,7 @@ path = "src/main.rs"
 required-features = ["coreml"]
 
 [features]
-default = ["coreml", "cli"]
+default = ["coreml", "cli", "jxl"]
 coreml = []
 onnx = ["dep:ort"]
 cli = ["dep:clap", "dep:indicatif", "dep:console"]
