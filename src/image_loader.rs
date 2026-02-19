@@ -198,7 +198,7 @@ async fn load_with_ffmpeg(path: &Path, format: &str) -> SpatialResult<DynamicIma
 		.ok_or_else(|| SpatialError::IoError("Invalid output path".to_string()))?;
 
 	let output = Command::new("ffmpeg")
-		.args(&["-i", input_str, "-c:v", "libjpeg", "-q:v", "2", "-y", output_str])
+		.args(&["-i", input_str, "-q:v", "2", "-y", output_str])
 		.output()
 		.map_err(|e| SpatialError::IoError(format!("Failed to run ffmpeg: {}", e)))?;
 
