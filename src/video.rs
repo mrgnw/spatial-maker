@@ -1,7 +1,10 @@
+use crate::depth_filter::DepthProcessor;
 use crate::error::{SpatialError, SpatialResult};
+use crate::output::{needs_depth, needs_stereo, OutputType};
 use crate::stereo::generate_stereo_pair;
-use crate::SpatialConfig;
+use crate::{NormalizeMode, SpatialConfig};
 use image::{DynamicImage, ImageBuffer, RgbImage};
+use ndarray::Array2;
 use std::path::Path;
 use std::process::Stdio;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -154,11 +157,15 @@ async fn extract_frames(
 
 	let input_path = input_path.to_path_buf();
 
+	let vf_scale = format!("scale={}:{}", width, height);
+
 	tokio::spawn(async move {
 		let mut child = Command::new("ffmpeg")
 			.args([
 				"-i",
 				input_path.to_str().unwrap(),
+				"-vf",
+				&vf_scale,
 				"-f",
 				"rawvideo",
 				"-pix_fmt",
@@ -288,6 +295,76 @@ async fn encode_stereo_video(
 	Ok(())
 }
 
+async fn encode_depth_video(
+	output_path: std::path::PathBuf,
+	metadata: VideoMetadata,
+	mut rx: mpsc::Receiver<Array2<f32>>,
+) -> SpatialResult<()> {
+	let width = metadata.width;
+	let height = metadata.height;
+	let fps = metadata.fps;
+
+	let mut child = Command::new("ffmpeg")
+		.args([
+			"-f", "rawvideo",
+			"-pix_fmt", "gray",
+			"-s", &format!("{}x{}", width, height),
+			"-r", &format!("{}", fps),
+			"-i", "-",
+			"-c:v", "libsvtav1",
+			"-crf", "23",
+			"-pix_fmt", "yuv420p",
+			"-y",
+			output_path.to_str().unwrap(),
+		])
+		.stdin(Stdio::piped())
+		.stdout(Stdio::null())
+		.stderr(Stdio::piped())
+		.spawn()
+		.map_err(|e| SpatialError::Other(format!("Failed to spawn ffmpeg depth encoder: {}", e)))?;
+
+	let mut stdin = child.stdin.take().expect("Failed to capture stdin");
+
+	while let Some(depth) = rx.recv().await {
+		let mut min_val = f32::INFINITY;
+		let mut max_val = f32::NEG_INFINITY;
+		for &v in depth.iter() {
+			if v < min_val { min_val = v; }
+			if v > max_val { max_val = v; }
+		}
+		let range = max_val - min_val;
+
+		let pixels: Vec<u8> = depth.iter().map(|&v| {
+			if range > 1e-6 {
+				((v - min_val) / range * 255.0).round() as u8
+			} else {
+				128u8
+			}
+		}).collect();
+
+		stdin
+			.write_all(&pixels)
+			.await
+			.map_err(|e| SpatialError::IoError(format!("Failed to write depth frame: {}", e)))?;
+	}
+
+	drop(stdin);
+
+	let output = child
+		.wait_with_output()
+		.await
+		.map_err(|e| SpatialError::Other(format!("ffmpeg depth encoding failed: {}", e)))?;
+
+	if !output.status.success() {
+		let stderr = String::from_utf8_lossy(&output.stderr);
+		return Err(SpatialError::Other(format!(
+			"ffmpeg depth encoding exited with error: {}", stderr
+		)));
+	}
+
+	Ok(())
+}
+
 fn is_spatial_cli_available() -> bool {
 	std::process::Command::new("spatial")
 		.arg("--version")
@@ -370,6 +447,7 @@ pub async fn process_video(
 	input_path: &Path,
 	output_path: &Path,
 	config: SpatialConfig,
+	output_types: &[OutputType],
 	progress_cb: Option<ProgressCallback>,
 ) -> SpatialResult<()> {
 	if !input_path.exists() {
@@ -379,8 +457,19 @@ pub async fn process_video(
 		)));
 	}
 
-	let metadata = get_video_metadata(input_path).await?;
-	let use_spatial = is_spatial_cli_available();
+	let do_depth = needs_depth(output_types);
+	let do_stereo = needs_stereo(output_types);
+
+	let mut metadata = get_video_metadata(input_path).await?;
+	metadata.width = metadata.width & !1;
+	metadata.height = metadata.height & !1;
+	let use_spatial = do_stereo && is_spatial_cli_available();
+
+	let stereo_output = {
+		let stem = output_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+		let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+		parent.join(format!("{}-spatial.mov", stem))
+	};
 
 	let sbs_path = if use_spatial {
 		let temp_dir = std::env::temp_dir();
@@ -391,6 +480,8 @@ pub async fn process_video(
 				.unwrap_or_default()
 				.as_millis()
 		))
+	} else if do_stereo {
+		stereo_output.clone()
 	} else {
 		output_path.to_path_buf()
 	};
@@ -406,18 +497,91 @@ pub async fn process_video(
 		std::sync::Arc::new(crate::depth_coreml::CoreMLDepthEstimator::new(model_str)?)
 	};
 
+	let mut depth_processor = DepthProcessor::new(
+		config.temporal_alpha,
+		config.bilateral_sigma_space,
+		config.bilateral_sigma_color,
+		config.depth_blur_sigma,
+		config.normalize_mode.clone(),
+	);
+
+	let total_frames = metadata.total_frames;
+
+	if matches!(config.normalize_mode, NormalizeMode::Global) {
+		if let Some(ref cb) = progress_cb {
+			cb(VideoProgress::new(0, total_frames, "scanning".to_string()));
+		}
+
+		let mut scan_rx = extract_frames(input_path, &metadata).await?;
+		let mut scan_count = 0u32;
+		while let Some(frame_data) = scan_rx.recv().await {
+			let frame = frame_to_image(&frame_data, metadata.width, metadata.height)?;
+			scan_count += 1;
+
+			#[cfg(all(target_os = "macos", feature = "coreml"))]
+			{
+				let raw = estimator.estimate_unnormalized(&frame)?;
+				depth_processor.update_global_range(&raw);
+			}
+
+			#[cfg(not(all(target_os = "macos", feature = "coreml")))]
+			{
+				let _ = frame;
+			}
+
+			if let Some(ref cb) = progress_cb {
+				if scan_count % 10 == 0 || scan_count == total_frames {
+					cb(VideoProgress::new(
+						scan_count,
+						total_frames,
+						"scanning".to_string(),
+					));
+				}
+			}
+		}
+	}
+
 	let mut frame_rx = extract_frames(input_path, &metadata).await?;
 
-	let (processed_tx, processed_rx) = mpsc::channel::<(DynamicImage, DynamicImage)>(10);
+	let stereo_tx_opt;
+	let stereo_handle;
 
-	let encode_handle = tokio::spawn(encode_stereo_video(
-		sbs_path.clone(),
-		metadata.clone(),
-		processed_rx,
-	));
+	if do_stereo {
+		let (tx, rx) = mpsc::channel::<(DynamicImage, DynamicImage)>(10);
+		stereo_tx_opt = Some(tx);
+		stereo_handle = Some(tokio::spawn(encode_stereo_video(
+			sbs_path.clone(),
+			metadata.clone(),
+			rx,
+		)));
+	} else {
+		stereo_tx_opt = None;
+		stereo_handle = None;
+	}
+
+	let depth_tx_opt;
+	let depth_handle;
+
+	if do_depth {
+		let depth_path = {
+			let stem = output_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+			let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+			parent.join(format!("{}-depth.mov", stem))
+		};
+
+		let (tx, rx) = mpsc::channel::<Array2<f32>>(10);
+		depth_tx_opt = Some(tx);
+		depth_handle = Some(tokio::spawn(encode_depth_video(
+			depth_path,
+			metadata.clone(),
+			rx,
+		)));
+	} else {
+		depth_tx_opt = None;
+		depth_handle = None;
+	}
 
 	let mut frame_count = 0u32;
-	let total_frames = metadata.total_frames;
 
 	if let Some(ref cb) = progress_cb {
 		cb(VideoProgress::new(0, total_frames, "extracting".to_string()));
@@ -438,7 +602,10 @@ pub async fn process_video(
 		}
 
 		#[cfg(all(target_os = "macos", feature = "coreml"))]
-		let depth_map = estimator.estimate(&frame)?;
+		let depth_map = {
+			let raw = estimator.estimate_unnormalized(&frame)?;
+			depth_processor.process(raw)
+		};
 
 		#[cfg(not(all(target_os = "macos", feature = "coreml")))]
 		let depth_map = {
@@ -456,16 +623,26 @@ pub async fn process_video(
 			}
 		};
 
-		let (left, right) = generate_stereo_pair(&frame, &depth_map, config.max_disparity)?;
+		if let Some(ref depth_tx) = depth_tx_opt {
+			if depth_tx.send(depth_map.clone()).await.is_err() {
+				return Err(SpatialError::Other(
+					"Depth encoder stopped unexpectedly".to_string(),
+				));
+			}
+		}
 
-		if processed_tx.send((left, right)).await.is_err() {
-			return Err(SpatialError::Other(
-				"Encoder stopped unexpectedly".to_string(),
-			));
+		if let Some(ref stereo_tx) = stereo_tx_opt {
+			let (left, right) = generate_stereo_pair(&frame, &depth_map, config.max_disparity)?;
+			if stereo_tx.send((left, right)).await.is_err() {
+				return Err(SpatialError::Other(
+					"Encoder stopped unexpectedly".to_string(),
+				));
+			}
 		}
 	}
 
-	drop(processed_tx);
+	drop(stereo_tx_opt);
+	drop(depth_tx_opt);
 
 	if let Some(ref cb) = progress_cb {
 		cb(VideoProgress::new(
@@ -475,9 +652,17 @@ pub async fn process_video(
 		));
 	}
 
-	encode_handle
-		.await
-		.map_err(|e| SpatialError::Other(format!("Encoding task failed: {}", e)))??;
+	if let Some(handle) = stereo_handle {
+		handle
+			.await
+			.map_err(|e| SpatialError::Other(format!("Stereo encoding task failed: {}", e)))??;
+	}
+
+	if let Some(handle) = depth_handle {
+		handle
+			.await
+			.map_err(|e| SpatialError::Other(format!("Depth encoding task failed: {}", e)))??;
+	}
 
 	if use_spatial {
 		if let Some(ref cb) = progress_cb {
@@ -488,8 +673,7 @@ pub async fn process_video(
 			));
 		}
 
-		let result = encode_mvhevc_video(&sbs_path, output_path, input_path, &metadata).await;
-		let _ = tokio::fs::remove_file(&sbs_path).await;
+		let result = encode_mvhevc_video(&sbs_path, &stereo_output, input_path, &metadata).await;
 		result?;
 	}
 

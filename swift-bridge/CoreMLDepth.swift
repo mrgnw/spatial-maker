@@ -18,17 +18,14 @@ public func loadModel(_ pathPtr: UnsafePointer<CChar>) -> UnsafeMutableRawPointe
 			// Compile the model first
 			let compiledURL = try MLModel.compileModel(at: url)
 			modelURL = compiledURL
-			print("✓ Model compiled to: \(compiledURL.path)")
 		} else {
 			modelURL = url
 		}
 		
-		// Configure to use all compute units (ANE + GPU + CPU)
 		let config = MLModelConfiguration()
 		config.computeUnits = .all
 		
 		let model = try MLModel(contentsOf: modelURL, configuration: config)
-		print("✓ CoreML model loaded successfully")
 		
 		// Return retained pointer to model
 		return Unmanaged.passRetained(model as AnyObject).toOpaque()
@@ -60,7 +57,6 @@ public func inferDepth(
 		// Create CVPixelBuffer from RGB8 data
 		// CoreML expects BGRA format, so we need to convert RGB -> BGRA
 		var pixelBuffer: CVPixelBuffer?
-		let bytesPerRow = w * 4
 		let status = CVPixelBufferCreate(
 			kCFAllocatorDefault,
 			w,
@@ -82,14 +78,17 @@ public func inferDepth(
 		let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer)!
 		let bgraData = baseAddress.assumingMemoryBound(to: UInt8.self)
 		
-		// Convert RGB (HWC) to BGRA
-		for i in 0..<(w * h) {
-			let rgbIdx = i * 3
-			let bgraIdx = i * 4
-			bgraData[bgraIdx + 0] = rgbData[rgbIdx + 2]  // B
-			bgraData[bgraIdx + 1] = rgbData[rgbIdx + 1]  // G
-			bgraData[bgraIdx + 2] = rgbData[rgbIdx + 0]  // R
-			bgraData[bgraIdx + 3] = 255                   // A
+		// Convert RGB (HWC) to BGRA, respecting CVPixelBuffer row padding
+		let actualBytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+		for y in 0..<h {
+			for x in 0..<w {
+				let rgbIdx = (y * w + x) * 3
+				let bgraIdx = y * actualBytesPerRow + x * 4
+				bgraData[bgraIdx + 0] = rgbData[rgbIdx + 2]  // B
+				bgraData[bgraIdx + 1] = rgbData[rgbIdx + 1]  // G
+				bgraData[bgraIdx + 2] = rgbData[rgbIdx + 0]  // R
+				bgraData[bgraIdx + 3] = 255                   // A
+			}
 		}
 		
 		// Run inference with CVPixelBuffer
@@ -107,11 +106,20 @@ public func inferDepth(
 			return -3
 		}
 		
-		// Convert Float16 output to Float32 for Rust
-		let outputCount = w * h
+		// Convert Float16 output to Float32 for Rust, respecting MLMultiArray strides
 		let srcPtr16 = depthArray.dataPointer.assumingMemoryBound(to: Float16.self)
-		for i in 0..<outputCount {
-			outputPtr[i] = Float(srcPtr16[i])
+		let strides = depthArray.strides.map { $0.intValue }
+		if strides.count == 3 {
+			for y in 0..<h {
+				for x in 0..<w {
+					let srcIdx = y * strides[1] + x * strides[2]
+					outputPtr[y * w + x] = Float(srcPtr16[srcIdx])
+				}
+			}
+		} else {
+			for i in 0..<(w * h) {
+				outputPtr[i] = Float(srcPtr16[i])
+			}
 		}
 		
 		return 0
