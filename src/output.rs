@@ -1,7 +1,274 @@
 use crate::error::{SpatialError, SpatialResult};
 use image::DynamicImage;
+use ndarray::Array2;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DepthFormat {
+	Avif,
+	Png,
+	Png16,
+}
+
+impl DepthFormat {
+	pub fn extension(&self) -> &'static str {
+		match self {
+			DepthFormat::Avif => "avif",
+			DepthFormat::Png => "png",
+			DepthFormat::Png16 => "png",
+		}
+	}
+
+	pub fn suffix(&self) -> &'static str {
+		match self {
+			DepthFormat::Avif => "",
+			DepthFormat::Png => "",
+			DepthFormat::Png16 => "-16bit",
+		}
+	}
+}
+
+pub const DEFAULT_DEPTH_FORMAT: DepthFormat = DepthFormat::Avif;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OutputType {
+	Depth(Vec<DepthFormat>),
+	SideBySide,
+	TopAndBottom,
+	Separate,
+	Spatial,
+}
+
+pub fn needs_depth(types: &[OutputType]) -> bool {
+	types.iter().any(|t| matches!(t, OutputType::Depth(_)))
+}
+
+pub fn needs_stereo(types: &[OutputType]) -> bool {
+	types.iter().any(|t| matches!(t, OutputType::SideBySide | OutputType::TopAndBottom | OutputType::Separate | OutputType::Spatial))
+}
+
+pub fn depth_formats(types: &[OutputType]) -> Vec<DepthFormat> {
+	types.iter().filter_map(|t| {
+		if let OutputType::Depth(fmts) = t { Some(fmts.clone()) } else { None }
+	}).flatten().collect()
+}
+
+pub fn stereo_types(types: &[OutputType]) -> Vec<&OutputType> {
+	types.iter().filter(|t| matches!(t, OutputType::SideBySide | OutputType::TopAndBottom | OutputType::Separate | OutputType::Spatial)).collect()
+}
+
+fn is_depth_format(s: &str) -> bool {
+	matches!(s, "avif" | "png" | "png16")
+}
+
+fn is_stereo_type(s: &str) -> bool {
+	matches!(s, "sbs" | "tab" | "sep" | "spatial")
+}
+
+fn parse_depth_format(s: &str) -> Result<DepthFormat, String> {
+	match s {
+		"avif" => Ok(DepthFormat::Avif),
+		"png" => Ok(DepthFormat::Png),
+		"png16" => Ok(DepthFormat::Png16),
+		_ => Err(format!("Unknown depth format: '{}'. Use: avif, png, png16", s)),
+	}
+}
+
+fn parse_stereo_type(s: &str) -> Result<OutputType, String> {
+	match s {
+		"sbs" => Ok(OutputType::SideBySide),
+		"tab" => Ok(OutputType::TopAndBottom),
+		"sep" => Ok(OutputType::Separate),
+		"spatial" => Ok(OutputType::Spatial),
+		_ => Err(format!("Unknown output type: '{}'", s)),
+	}
+}
+
+pub fn parse_output_types(s: &str) -> Result<Vec<OutputType>, String> {
+	let parts: Vec<&str> = s.split(',').map(|p| p.trim()).filter(|p| !p.is_empty()).collect();
+	let mut types = Vec::new();
+	let mut depth_fmts = Vec::new();
+	let mut has_depth = false;
+
+	for part in &parts {
+		if *part == "depth" {
+			has_depth = true;
+			continue;
+		}
+
+		if let Some(after_colon) = part.strip_prefix("depth:") {
+			has_depth = true;
+			depth_fmts.push(parse_depth_format(after_colon)?);
+			continue;
+		}
+
+		if has_depth && is_depth_format(part) {
+			depth_fmts.push(parse_depth_format(part)?);
+			continue;
+		}
+
+		if is_stereo_type(part) {
+			types.push(parse_stereo_type(part)?);
+		} else if is_depth_format(part) {
+			return Err(format!(
+				"'{}' must be specified as a depth sub-format: depth:{}", part, part
+			));
+		} else {
+			return Err(format!("Unknown output type: '{}'", part));
+		}
+	}
+
+	if has_depth {
+		if depth_fmts.is_empty() {
+			depth_fmts.push(DEFAULT_DEPTH_FORMAT);
+		}
+		types.insert(0, OutputType::Depth(depth_fmts));
+	}
+
+	if types.is_empty() {
+		return Err("No output types specified".to_string());
+	}
+
+	Ok(types)
+}
+
+// --- Depth map saving ---
+
+fn normalize_depth(depth: &Array2<f32>) -> (f32, f32) {
+	let mut min_val = f32::INFINITY;
+	let mut max_val = f32::NEG_INFINITY;
+	for &v in depth.iter() {
+		if v < min_val { min_val = v; }
+		if v > max_val { max_val = v; }
+	}
+	(min_val, max_val)
+}
+
+pub fn save_depth_png8(depth: &Array2<f32>, path: &Path) -> SpatialResult<()> {
+	let (h, w) = depth.dim();
+	let (min_val, max_val) = normalize_depth(depth);
+	let range = max_val - min_val;
+
+	let pixels: Vec<u8> = depth.iter().map(|&v| {
+		if range > 1e-6 {
+			((v - min_val) / range * 255.0).round() as u8
+		} else {
+			128u8
+		}
+	}).collect();
+
+	let img = image::GrayImage::from_raw(w as u32, h as u32, pixels)
+		.ok_or_else(|| SpatialError::ImageError("Failed to create grayscale image".to_string()))?;
+
+	img.save(path)
+		.map_err(|e| SpatialError::ImageError(format!("Failed to save depth PNG: {}", e)))?;
+
+	Ok(())
+}
+
+pub fn save_depth_png16(depth: &Array2<f32>, path: &Path) -> SpatialResult<()> {
+	let (h, w) = depth.dim();
+	let (min_val, max_val) = normalize_depth(depth);
+	let range = max_val - min_val;
+
+	let pixels: Vec<u16> = depth.iter().map(|&v| {
+		if range > 1e-6 {
+			((v - min_val) / range * 65535.0).round() as u16
+		} else {
+			32768u16
+		}
+	}).collect();
+
+	let file = std::fs::File::create(path)
+		.map_err(|e| SpatialError::ImageError(format!("Failed to create output file: {}", e)))?;
+	let writer = std::io::BufWriter::new(file);
+
+	let encoder = image::codecs::png::PngEncoder::new(writer);
+	use image::ImageEncoder;
+
+	let byte_data: Vec<u8> = pixels.iter().flat_map(|&v| v.to_be_bytes()).collect();
+
+	encoder.write_image(
+		&byte_data,
+		w as u32,
+		h as u32,
+		image::ExtendedColorType::L16,
+	).map_err(|e| SpatialError::ImageError(format!("Failed to encode 16-bit PNG: {}", e)))?;
+
+	Ok(())
+}
+
+pub fn save_depth_avif(depth: &Array2<f32>, path: &Path) -> SpatialResult<()> {
+	let (h, w) = depth.dim();
+	let (min_val, max_val) = normalize_depth(depth);
+	let range = max_val - min_val;
+
+	let pixels: Vec<u8> = depth.iter().map(|&v| {
+		if range > 1e-6 {
+			((v - min_val) / range * 255.0).round() as u8
+		} else {
+			128u8
+		}
+	}).collect();
+
+	let rgb_pixels: Vec<u8> = pixels.iter().flat_map(|&v| [v, v, v]).collect();
+
+	let path_str = path.to_str()
+		.ok_or_else(|| SpatialError::ImageError("Invalid output path".to_string()))?;
+
+	let mut child = Command::new("ffmpeg")
+		.args([
+			"-f", "rawvideo",
+			"-pix_fmt", "rgb24",
+			"-s", &format!("{}x{}", w, h),
+			"-i", "-",
+			"-frames:v", "1",
+			"-c:v", "libsvtav1",
+			"-crf", "23",
+			"-y",
+			path_str,
+		])
+		.stdin(std::process::Stdio::piped())
+		.stdout(std::process::Stdio::null())
+		.stderr(std::process::Stdio::piped())
+		.spawn()
+		.map_err(|e| SpatialError::Other(format!("Failed to spawn ffmpeg for AVIF encoding: {}", e)))?;
+
+	if let Some(mut stdin) = child.stdin.take() {
+		use std::io::Write;
+		stdin.write_all(&rgb_pixels)
+			.map_err(|e| SpatialError::IoError(format!("Failed to write depth data to ffmpeg: {}", e)))?;
+	}
+
+	let output = child.wait_with_output()
+		.map_err(|e| SpatialError::Other(format!("ffmpeg AVIF encoding failed: {}", e)))?;
+
+	if !output.status.success() {
+		let stderr = String::from_utf8_lossy(&output.stderr);
+		return Err(SpatialError::ImageError(format!("ffmpeg AVIF encoding failed: {}", stderr)));
+	}
+
+	Ok(())
+}
+
+pub fn save_depth_map(depth: &Array2<f32>, path: &Path, format: DepthFormat) -> SpatialResult<()> {
+	if let Some(parent) = path.parent() {
+		std::fs::create_dir_all(parent).map_err(|e| {
+			SpatialError::ImageError(format!("Failed to create output directory: {}", e))
+		})?;
+	}
+
+	match format {
+		DepthFormat::Avif => save_depth_avif(depth, path)?,
+		DepthFormat::Png => save_depth_png8(depth, path)?,
+		DepthFormat::Png16 => save_depth_png16(depth, path)?,
+	}
+
+	Ok(())
+}
+
+// --- Existing stereo output ---
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -229,7 +496,7 @@ fn save_image(image: &DynamicImage, path: &Path, encoding: ImageEncoding) -> Spa
 	Ok(())
 }
 
-fn encode_mvhevc(stereo_path: &Path, config: &MVHEVCConfig) -> SpatialResult<()> {
+pub fn encode_mvhevc(stereo_path: &Path, config: &MVHEVCConfig) -> SpatialResult<()> {
 	let spatial_path = config
 		.spatial_cli_path
 		.as_ref()

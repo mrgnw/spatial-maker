@@ -40,9 +40,7 @@ impl CoreMLDepthEstimator {
 		Ok(Self { model })
 	}
 
-	pub fn estimate_raw(&self, image: &DynamicImage) -> SpatialResult<ImageBuffer<Luma<f32>, Vec<f32>>> {
-		let (orig_width, orig_height) = (image.width(), image.height());
-
+	fn infer_raw(&self, image: &DynamicImage) -> SpatialResult<Vec<f32>> {
 		let resized = image.resize_exact(
 			INPUT_SIZE,
 			INPUT_SIZE,
@@ -71,6 +69,35 @@ impl CoreMLDepthEstimator {
 				result
 			)));
 		}
+
+		Ok(output_data)
+	}
+
+	pub fn estimate_unnormalized(&self, image: &DynamicImage) -> SpatialResult<Array2<f32>> {
+		let (orig_width, orig_height) = (image.width(), image.height());
+		let output_data = self.infer_raw(image)?;
+
+		let depth_image = ImageBuffer::from_fn(INPUT_SIZE, INPUT_SIZE, |x, y| {
+			let idx = (y * INPUT_SIZE + x) as usize;
+			Luma([output_data[idx]])
+		});
+
+		let resized_depth = image::imageops::resize(
+			&depth_image,
+			orig_width,
+			orig_height,
+			image::imageops::FilterType::Lanczos3,
+		);
+
+		let (w, h) = resized_depth.dimensions();
+		let data: Vec<f32> = resized_depth.pixels().map(|p| p[0]).collect();
+		Array2::from_shape_vec((h as usize, w as usize), data)
+			.map_err(|e| SpatialError::TensorError(format!("Failed to reshape depth: {}", e)))
+	}
+
+	pub fn estimate_raw(&self, image: &DynamicImage) -> SpatialResult<ImageBuffer<Luma<f32>, Vec<f32>>> {
+		let (orig_width, orig_height) = (image.width(), image.height());
+		let mut output_data = self.infer_raw(image)?;
 
 		let min_val = output_data.iter().copied().fold(f32::INFINITY, f32::min);
 		let max_val = output_data

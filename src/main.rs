@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
+use console::style;
+use indicatif::{ProgressBar, ProgressStyle};
 use spatial_maker::{
-	process_photo, process_video, ImageEncoding, MVHEVCConfig, OutputFormat, OutputOptions,
-	SpatialConfig, VideoProgress,
+	process_photo, process_video, ImageEncoding, MVHEVCConfig, NormalizeMode, OutputFormat,
+	OutputOptions, OutputType, SpatialConfig, VideoProgress,
+	needs_stereo, parse_output_types,
 };
 use std::path::PathBuf;
 
@@ -33,17 +36,33 @@ struct Cli {
 	#[arg(long, default_value = "30")]
 	max_disparity: u32,
 
-	/// Output format for photos: sbs (side-by-side), tab (top-and-bottom), sep (separate L/R)
-	#[arg(long, default_value = "sbs")]
-	format: String,
+	/// Output types (comma-separated): depth, depth:avif,png,png16, sbs, tab, sep, spatial
+	#[arg(long, default_value = "spatial")]
+	output_types: String,
 
 	/// JPEG quality for photos (1-100)
 	#[arg(long, default_value = "95")]
 	quality: u8,
 
-	/// Enable MV-HEVC packaging for photos (requires 'spatial' CLI in PATH)
-	#[arg(long)]
-	mvhevc: bool,
+	/// Temporal EMA blend factor for video depth (0=off, 1=no smoothing, default 0.7)
+	#[arg(long, default_value = "0.7")]
+	temporal_alpha: f32,
+
+	/// Bilateral filter spatial sigma (0=off, default 5.0)
+	#[arg(long, default_value = "5.0")]
+	bilateral_sigma: f32,
+
+	/// Bilateral filter range sigma (default 0.1)
+	#[arg(long, default_value = "0.1")]
+	bilateral_range: f32,
+
+	/// Gaussian blur sigma for depth edge softening (0=off, default 1.5)
+	#[arg(long, default_value = "1.5")]
+	depth_blur: f32,
+
+	/// Depth normalization mode for video: running (default), per-frame, global (two-pass)
+	#[arg(long, default_value = "running")]
+	normalize: String,
 }
 
 #[derive(Subcommand)]
@@ -82,88 +101,222 @@ fn detect_media_type(path: &PathBuf) -> MediaType {
 	}
 }
 
-fn generate_output_path(input: &PathBuf, media_type: &MediaType) -> PathBuf {
+fn generate_output_base(input: &PathBuf, model: &str) -> PathBuf {
 	let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-	let src_ext = input
-		.extension()
-		.and_then(|s| s.to_str())
-		.unwrap_or("")
-		.to_lowercase();
-
-	let extension = match media_type {
-		MediaType::Video => "mov",
-		MediaType::Photo => match src_ext.as_str() {
-			"heic" | "heif" | "avif" | "jxl" => "jpg",
-			"" => "jpg",
-			_ => &src_ext,
-		},
-	};
-
 	let parent = input.parent().unwrap_or_else(|| std::path::Path::new("."));
-	parent.join(format!("{}-spatial.{}", stem, extension))
+	parent.join(format!("{}-{}", stem, model))
+}
+
+
+
+fn model_display_name(encoder_size: &str) -> (&str, u32) {
+	match encoder_size {
+		"s" | "small" => ("small", 48),
+		"b" | "base" => ("base", 186),
+		"l" | "large" => ("large", 638),
+		_ => (encoder_size, 0),
+	}
 }
 
 async fn process_single(
 	input: &PathBuf,
 	output: PathBuf,
 	config: SpatialConfig,
+	output_types: &[OutputType],
 	cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error>> {
 	let media_type = detect_media_type(input);
 
 	match media_type {
 		MediaType::Photo => {
-			let layout = match cli.format.as_str() {
-				"sbs" => OutputFormat::SideBySide,
-				"tab" => OutputFormat::TopAndBottom,
-				"sep" => OutputFormat::Separate,
-				_ => {
-					eprintln!("Invalid format '{}'. Use: sbs, tab, or sep", cli.format);
-					std::process::exit(1);
+			let has_stereo = needs_stereo(output_types);
+
+			let layout = if has_stereo {
+				let stereo = spatial_maker::stereo_types(output_types);
+				match stereo.first() {
+					Some(OutputType::TopAndBottom) => OutputFormat::TopAndBottom,
+					Some(OutputType::Separate) => OutputFormat::Separate,
+					_ => OutputFormat::SideBySide,
 				}
+			} else {
+				OutputFormat::SideBySide
 			};
+
+			let has_spatial = output_types.iter().any(|t| matches!(t, OutputType::Spatial));
 
 			let output_options = OutputOptions {
 				layout,
 				image_format: ImageEncoding::Jpeg {
 					quality: cli.quality,
 				},
-				mvhevc: if cli.mvhevc {
+				mvhevc: if has_spatial {
 					Some(MVHEVCConfig {
 						spatial_cli_path: None,
 						enabled: true,
 						quality: cli.quality,
-						keep_intermediate: false,
+						keep_intermediate: has_stereo && output_types.iter().any(|t| matches!(t, OutputType::SideBySide | OutputType::TopAndBottom | OutputType::Separate)),
 					})
 				} else {
 					None
 				},
 			};
 
-			eprintln!("Processing photo: {:?}", input);
-			process_photo(input, &output, config, output_options).await?;
-			eprintln!("Saved to: {:?}", output);
+			let filename = input.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+			eprintln!("{} {}", style("🖼").cyan(), style(filename).bold());
+
+			let spinner = ProgressBar::new_spinner();
+			spinner.set_style(
+				ProgressStyle::default_spinner()
+					.template("{spinner:.cyan} {msg}")
+					.unwrap()
+			);
+			spinner.set_message("Processing...");
+			spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+
+			let result = process_photo(input, &output, config.clone(), output_types, output_options).await?;
+
+			spinner.finish_and_clear();
+			let (model_name, model_mb) = model_display_name(&cli.model);
+			eprintln!(
+				"{} {} / {} MB / depth-anything-v2-{}",
+				style("✔").green().bold(),
+				style("done").green(),
+				model_mb,
+				model_name,
+			);
+
+			for path in &result.depth_paths {
+				let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+				eprintln!("{} {}", style("→").dim(), style(name).dim());
+			}
+			for path in &result.stereo_paths {
+				let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+				eprintln!("{} {}", style("→").dim(), style(name).dim());
+			}
 		}
 		MediaType::Video => {
-			eprintln!("Processing video: {:?}", input);
+			let filename = input.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+			eprintln!("{} {}", style("🎥").cyan(), style(filename).bold());
+
+			let (model_name, model_mb) = model_display_name(&cli.model);
+			let model_info = format!("model loaded / {} MB / depth-anything-v2-{}", model_mb, model_name);
+
+			let spinner = ProgressBar::new_spinner();
+			spinner.set_style(
+				ProgressStyle::default_spinner()
+					.template("{spinner:.cyan} {msg}")
+					.unwrap()
+			);
+			spinner.set_message("Loading model...");
+			spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+
 			let start = std::time::Instant::now();
+
+			let pb = ProgressBar::new(100);
+			pb.set_style(
+				ProgressStyle::default_bar()
+					.template("{msg} {bar:20.cyan/blue} {pos:>3}% {prefix}")
+					.unwrap()
+					.progress_chars("━╸─")
+			);
+
+			let pb_inner = pb.clone();
+			let start_clone = start.clone();
+			let model_loaded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+			let model_loaded_clone = model_loaded.clone();
+			let spinner_clone = spinner.clone();
 
 			process_video(
 				input,
 				&output,
 				config,
-				Some(Box::new(|progress: VideoProgress| {
-					eprint!(
-						"\r[{}] Frame {}/{} ({:.1}%)",
-						progress.stage, progress.current_frame, progress.total_frames, progress.percent
-					);
+				output_types,
+				Some(Box::new(move |progress: VideoProgress| {
+					if !model_loaded_clone.load(std::sync::atomic::Ordering::Relaxed) {
+						model_loaded_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+						spinner_clone.finish_and_clear();
+						eprintln!(
+							"{} {}",
+							style("✔").green().bold(),
+							model_info,
+						);
+					}
+
+					let elapsed = start_clone.elapsed().as_secs_f64();
+					let fps = if elapsed > 0.1 && progress.current_frame > 0 {
+						progress.current_frame as f64 / elapsed
+					} else {
+						0.0
+					};
+
+				match progress.stage.as_str() {
+					"scanning" => {
+						pb_inner.set_message(format!("{}", style("scanning depths").yellow()));
+						let pct = if progress.total_frames > 0 {
+							(progress.current_frame as f64 / progress.total_frames as f64 * 100.0) as u64
+						} else {
+							0
+						};
+						pb_inner.set_position(pct);
+						pb_inner.set_prefix(format!("{}/{}", progress.current_frame, progress.total_frames));
+					}
+					"extracting" => {
+						pb_inner.set_message(format!("{}", style("loading").yellow()));
+						pb_inner.set_position(0);
+					}
+						"processing" => {
+							let eta_secs = if fps > 0.1 {
+								let remaining = progress.total_frames.saturating_sub(progress.current_frame);
+								remaining as f64 / fps
+							} else {
+								0.0
+							};
+
+							let eta_str = if eta_secs > 60.0 {
+								format!("{}m {:02}s", eta_secs as u64 / 60, eta_secs as u64 % 60)
+							} else {
+								format!("{:.0}s", eta_secs)
+							};
+
+							pb_inner.set_message(format!(
+								"{:>5.1} fps",
+								fps,
+							));
+							pb_inner.set_prefix(format!(
+								"{}/{} eta {}",
+								progress.current_frame,
+								progress.total_frames,
+								eta_str,
+							));
+							pb_inner.set_position(progress.percent as u64);
+						}
+						"encoding" => {
+							pb_inner.set_message(format!("{}", style("encoding").yellow()));
+							pb_inner.set_position(100);
+							pb_inner.set_prefix(String::new());
+						}
+						"packaging" => {
+							pb_inner.set_message(format!("{}", style("packaging MV-HEVC").yellow()));
+						}
+						"complete" => {
+							pb_inner.finish_and_clear();
+						}
+						_ => {}
+					}
 				})),
 			)
 			.await?;
 
-			eprintln!();
-			eprintln!("Saved to: {:?}", output);
-			eprintln!("Total time: {:.1}s", start.elapsed().as_secs_f64());
+			pb.finish_and_clear();
+
+			let elapsed = start.elapsed().as_secs_f64();
+			let out_name = output.file_name().and_then(|s| s.to_str()).unwrap_or("?");
+			eprintln!(
+				"{} {} ({:.1}s)",
+				style("→").green().bold(),
+				style(out_name).white(),
+				elapsed,
+			);
 		}
 	}
 
@@ -189,10 +342,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		std::process::exit(1);
 	}
 
+	let output_types = parse_output_types(&cli.output_types).unwrap_or_else(|e| {
+		eprintln!("Invalid --output-types: {}", e);
+		std::process::exit(1);
+	});
+
+	let normalize_mode: NormalizeMode = cli.normalize.parse().unwrap_or_else(|e| {
+		eprintln!("{}", e);
+		std::process::exit(1);
+	});
+
 	let config = SpatialConfig {
 		encoder_size: cli.model.clone(),
 		max_disparity: cli.max_disparity,
 		target_depth_size: 518,
+		temporal_alpha: cli.temporal_alpha,
+		bilateral_sigma_space: cli.bilateral_sigma,
+		bilateral_sigma_color: cli.bilateral_range,
+		depth_blur_sigma: cli.depth_blur,
+		normalize_mode,
 	};
 
 	let total = cli.inputs.len();
@@ -200,23 +368,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	for (i, input) in cli.inputs.iter().enumerate() {
 		if total > 1 {
-			eprintln!("[{}/{}]", i + 1, total);
+			eprintln!(
+				"{} {}/{}",
+				style("─").dim(),
+				style(i + 1).bold(),
+				style(total).dim(),
+			);
 		}
 
-		let media_type = detect_media_type(input);
 		let output = cli
 			.output
 			.clone()
-			.unwrap_or_else(|| generate_output_path(input, &media_type));
+			.unwrap_or_else(|| generate_output_base(input, &cli.model));
 
-		if let Err(e) = process_single(input, output, config.clone(), &cli).await {
-			eprintln!("Error processing {:?}: {}", input, e);
+		if let Err(e) = process_single(input, output, config.clone(), &output_types, &cli).await {
+			eprintln!("{} {:?}: {}", style("✗").red().bold(), input, e);
 			errors.push((input.clone(), e));
 		}
 	}
 
 	if !errors.is_empty() {
-		eprintln!("\n{}/{} files failed", errors.len(), total);
+		eprintln!(
+			"\n{} {}/{} files failed",
+			style("✗").red().bold(),
+			errors.len(),
+			total,
+		);
 		std::process::exit(1);
 	}
 
@@ -232,7 +409,6 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 
 	let client = reqwest::Client::new();
 
-	// Get latest release from GitHub API
 	let release: serde_json::Value = client
 		.get(format!("https://api.github.com/repos/{}/releases/latest", repo))
 		.header("User-Agent", "spatial-maker")
@@ -253,7 +429,6 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 
 	eprintln!("New version available: v{} -> v{}", current_version, latest_version);
 
-	// Determine current arch
 	let target = if cfg!(target_arch = "aarch64") {
 		"aarch64-apple-darwin"
 	} else if cfg!(target_arch = "x86_64") {
@@ -264,7 +439,6 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 
 	let asset_name = format!("spatial-maker-{}-{}.tar.gz", latest_tag, target);
 
-	// Find the download URL from release assets
 	let assets = release["assets"]
 		.as_array()
 		.ok_or("No assets in release")?;
@@ -275,9 +449,15 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 		.and_then(|a| a["browser_download_url"].as_str())
 		.ok_or_else(|| format!("No release asset found for {}", target))?;
 
-	eprintln!("Downloading {}...", asset_name);
+	let pb = ProgressBar::new_spinner();
+	pb.set_style(
+		ProgressStyle::default_spinner()
+			.template("{spinner:.cyan} {msg}")
+			.unwrap()
+	);
+	pb.set_message(format!("Downloading {}...", asset_name));
+	pb.enable_steady_tick(std::time::Duration::from_millis(80));
 
-	// Download to a temp file
 	let response = client
 		.get(download_url)
 		.header("User-Agent", "spatial-maker")
@@ -286,7 +466,8 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 
 	let bytes = response.bytes().await?;
 
-	// Extract the binary from the tarball
+	pb.set_message("Extracting...");
+
 	let decoder = flate2::read::GzDecoder::new(&bytes[..]);
 	let mut archive = tar::Archive::new(decoder);
 
@@ -298,15 +479,14 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 
 	let new_binary = temp_dir.join("spatial-maker");
 	if !new_binary.exists() {
+		pb.finish_and_clear();
 		return Err("Binary not found in release archive".into());
 	}
 
-	// Determine where to install
 	let current_exe = std::env::current_exe()?;
 	let install_path = if is_writable(&current_exe) {
 		current_exe.clone()
 	} else {
-		// Try ~/.local/bin as a user-writable alternative
 		let local_bin = dirs::home_dir()
 			.ok_or("Could not determine home directory")?
 			.join(".local/bin");
@@ -320,7 +500,6 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 		alt_path
 	};
 
-	// Replace the binary atomically: copy new -> rename over old
 	let staging = install_path.with_extension("new");
 	std::fs::copy(&new_binary, &staging)?;
 
@@ -332,12 +511,16 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 
 	std::fs::rename(&staging, &install_path)?;
 
-	// Cleanup
 	let _ = std::fs::remove_dir_all(&temp_dir);
 
-	eprintln!("Updated to v{} at {}", latest_version, install_path.display());
+	pb.finish_and_clear();
+	eprintln!(
+		"{} Updated to {} at {}",
+		style("✔").green().bold(),
+		style(format!("v{}", latest_version)).green(),
+		install_path.display(),
+	);
 
-	// Remind about PATH if installed to ~/.local/bin
 	if install_path != current_exe {
 		eprintln!("Make sure {} is in your PATH", install_path.parent().unwrap().display());
 	}
@@ -356,13 +539,11 @@ fn is_newer_version(current: &str, latest: &str) -> bool {
 
 fn is_writable(path: &PathBuf) -> bool {
 	if path.exists() {
-		// Try opening for write to test permissions
 		std::fs::OpenOptions::new()
 			.write(true)
 			.open(path)
 			.is_ok()
 	} else {
-		// Check if parent directory is writable
 		path.parent()
 			.map(|p| {
 				let test = p.join(".spatial-maker-write-test");
