@@ -7,6 +7,9 @@ pub mod output;
 pub mod stereo;
 pub mod video;
 
+#[cfg(feature = "cli")]
+pub mod tui;
+
 #[cfg(all(target_os = "macos", feature = "coreml"))]
 pub mod depth_coreml;
 
@@ -17,9 +20,9 @@ pub use model::{find_model, get_checkpoint_dir, model_exists};
 pub use output::{
 	create_sbs_image, save_stereo_image,
 	DepthFormat, ImageEncoding, MVHEVCConfig, OutputFormat, OutputOptions, OutputType,
-	depth_formats, needs_depth, needs_stereo, parse_output_types, save_depth_map, stereo_types,
+	depth_formats, load_depth_map, needs_depth, needs_stereo, parse_output_types, save_depth_map, stereo_types,
 };
-pub use stereo::generate_stereo_pair;
+pub use stereo::{generate_stereo_pair, generate_stereo_pair_with_progress};
 pub use video::{get_video_metadata, process_video, ProgressCallback, VideoMetadata, VideoProgress};
 
 #[cfg(all(target_os = "macos", feature = "coreml"))]
@@ -105,64 +108,105 @@ pub async fn process_photo(
 	config: SpatialConfig,
 	output_types: &[OutputType],
 	output_options: OutputOptions,
+	force: bool,
 ) -> SpatialResult<ProcessPhotoOutput> {
-	let input_image = load_image(input_path).await?;
+	let do_depth = needs_depth(output_types);
+	let do_stereo = needs_stereo(output_types);
 
-	model::ensure_model_exists::<fn(u64, u64)>(&config.encoder_size, None).await?;
+	let parent = output_base_path.parent().unwrap_or_else(|| Path::new("."));
+	let stem = output_base_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
 
-	#[cfg(all(target_os = "macos", feature = "coreml"))]
-	let depth_map = {
-		let model_path = model::find_model(&config.encoder_size)?;
-		let model_str = model_path.to_str().ok_or_else(|| {
-			SpatialError::ModelError("Invalid model path encoding".to_string())
-		})?;
-		let estimator = CoreMLDepthEstimator::new(model_str)?;
-		estimator.estimate(&input_image)?
+	let depth_paths: Vec<(std::path::PathBuf, DepthFormat)> = if do_depth {
+		depth_formats(output_types)
+			.into_iter()
+			.map(|fmt| {
+				let filename = format!("{}-depth{}.{}", stem, fmt.suffix(), fmt.extension());
+				(parent.join(&filename), fmt)
+			})
+			.collect()
+	} else {
+		Vec::new()
 	};
 
-	#[cfg(not(all(target_os = "macos", feature = "coreml")))]
-	let depth_map = {
-		#[cfg(feature = "onnx")]
-		{
-			let model_path = model::find_model(&config.encoder_size)?;
-			let estimator = OnnxDepthEstimator::new(model_path.to_str().unwrap())?;
-			estimator.estimate(&input_image)?
-		}
-		#[cfg(not(feature = "onnx"))]
-		{
-			return Err(SpatialError::ConfigError(
-				"No depth backend enabled. Enable 'coreml' (macOS) or 'onnx' feature.".to_string(),
-			));
-		}
-	};
+	let all_depth_exist = !depth_paths.is_empty() && depth_paths.iter().all(|(p, _)| p.exists());
+	let skip_estimation = all_depth_exist && !force;
 
 	let mut result = ProcessPhotoOutput {
 		depth_paths: Vec::new(),
 		stereo_paths: Vec::new(),
 	};
 
-	if needs_depth(output_types) {
-		let parent = output_base_path.parent().unwrap_or_else(|| Path::new("."));
-		let stem = output_base_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-
-		for fmt in depth_formats(output_types) {
-			let filename = format!("{}-depth{}.{}", stem, fmt.suffix(), fmt.extension());
-			let depth_path = parent.join(&filename);
-			save_depth_map(&depth_map, &depth_path, fmt)?;
-			result.depth_paths.push(depth_path.clone());
+	let depth_map = if skip_estimation {
+		for (p, _) in &depth_paths {
+			result.depth_paths.push(p.clone());
 		}
-	}
 
-	if needs_stereo(output_types) {
-		let (left, right) = generate_stereo_pair(&input_image, &depth_map, config.max_disparity)?;
+		if do_stereo {
+			let best = depth_paths.iter()
+				.find(|(_, fmt)| matches!(fmt, DepthFormat::Png16))
+				.or_else(|| depth_paths.iter().find(|(_, fmt)| matches!(fmt, DepthFormat::Png)))
+				.or_else(|| depth_paths.first())
+				.map(|(p, _)| p);
+			match best {
+				Some(p) => Some(output::load_depth_map(p)?),
+				None => None,
+			}
+		} else {
+			None
+		}
+	} else {
+		let input_image = load_image(input_path).await?;
+
+		model::ensure_model_exists::<fn(u64, u64)>(&config.encoder_size, None).await?;
+
+		#[cfg(all(target_os = "macos", feature = "coreml"))]
+		let dm = {
+			let model_path = model::find_model(&config.encoder_size)?;
+			let model_str = model_path.to_str().ok_or_else(|| {
+				SpatialError::ModelError("Invalid model path encoding".to_string())
+			})?;
+			let estimator = CoreMLDepthEstimator::new(model_str)?;
+			estimator.estimate(&input_image)?
+		};
+
+		#[cfg(not(all(target_os = "macos", feature = "coreml")))]
+		let dm = {
+			#[cfg(feature = "onnx")]
+			{
+				let model_path = model::find_model(&config.encoder_size)?;
+				let estimator = OnnxDepthEstimator::new(model_path.to_str().unwrap())?;
+				estimator.estimate(&input_image)?
+			}
+			#[cfg(not(feature = "onnx"))]
+			{
+				return Err(SpatialError::ConfigError(
+					"No depth backend enabled. Enable 'coreml' (macOS) or 'onnx' feature.".to_string(),
+				));
+			}
+		};
+
+		if do_depth {
+			for (depth_path, fmt) in &depth_paths {
+				save_depth_map(&dm, depth_path, *fmt)?;
+				result.depth_paths.push(depth_path.clone());
+			}
+		}
+
+		Some(dm)
+	};
+
+	if do_stereo {
+		let dm = depth_map.as_ref().ok_or_else(|| {
+			SpatialError::ConfigError("Depth map required for stereo but not available".to_string())
+		})?;
+		let input_image = load_image(input_path).await?;
+		let (left, right) = generate_stereo_pair(&input_image, dm, config.max_disparity)?;
 		let src_ext = input_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
 		let stereo_ext = match src_ext.as_str() {
 			"heic" | "heif" | "avif" | "jxl" => "jpg",
 			"" => "jpg",
 			other => other,
 		};
-		let parent = output_base_path.parent().unwrap_or_else(|| Path::new("."));
-		let stem = output_base_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
 		let stereo_path = parent.join(format!("{}-spatial.{}", stem, stereo_ext));
 		save_stereo_image(&left, &right, &stereo_path, output_options)?;
 		result.stereo_paths.push(stereo_path);
@@ -176,6 +220,7 @@ pub async fn process_video_sbs(
 	output_path: &Path,
 	config: SpatialConfig,
 	progress_cb: Option<ProgressCallback>,
+	force: bool,
 ) -> SpatialResult<()> {
-	video::process_video(input_path, output_path, config, &[OutputType::Spatial], progress_cb).await
+	video::process_video(input_path, output_path, config, &[OutputType::Spatial], progress_cb, force).await
 }

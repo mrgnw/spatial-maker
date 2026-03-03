@@ -449,6 +449,7 @@ pub async fn process_video(
 	config: SpatialConfig,
 	output_types: &[OutputType],
 	progress_cb: Option<ProgressCallback>,
+	force: bool,
 ) -> SpatialResult<()> {
 	if !input_path.exists() {
 		return Err(SpatialError::IoError(format!(
@@ -562,24 +563,32 @@ pub async fn process_video(
 	let depth_tx_opt;
 	let depth_handle;
 
-	if do_depth {
+	let _encode_depth = if do_depth {
 		let depth_path = {
 			let stem = output_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
 			let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
 			parent.join(format!("{}-depth.mov", stem))
 		};
 
-		let (tx, rx) = mpsc::channel::<Array2<f32>>(10);
-		depth_tx_opt = Some(tx);
-		depth_handle = Some(tokio::spawn(encode_depth_video(
-			depth_path,
-			metadata.clone(),
-			rx,
-		)));
+		if !force && depth_path.exists() {
+			depth_tx_opt = None;
+			depth_handle = None;
+			false
+		} else {
+			let (tx, rx) = mpsc::channel::<Array2<f32>>(10);
+			depth_tx_opt = Some(tx);
+			depth_handle = Some(tokio::spawn(encode_depth_video(
+				depth_path,
+				metadata.clone(),
+				rx,
+			)));
+			true
+		}
 	} else {
 		depth_tx_opt = None;
 		depth_handle = None;
-	}
+		false
+	};
 
 	let mut frame_count = 0u32;
 
