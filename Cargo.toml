@@ -1,6 +1,6 @@
 [package]
 name = "spatial-maker"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 license = "MIT"
 description = "Convert 2D images and videos to stereoscopic 3D spatial content for Apple Vision Pro using AI depth estimation"
@@ -42,7 +42,7 @@ required-features = ["coreml"]
 default = ["coreml", "cli", "jxl"]
 coreml = []
 onnx = ["dep:ort"]
-cli = ["dep:clap", "dep:indicatif", "dep:console"]
+cli = ["dep:clap", "dep:ratatui", "dep:crossterm"]
 
 # Native format decoders (optional - falls back to ffmpeg if not enabled)
 avif = ["image/avif"]
@@ -76,12 +76,12 @@ version = "4"
 features = ["derive"]
 optional = true
 
-[dependencies.indicatif]
-version = "0.17"
+[dependencies.ratatui]
+version = "0.30"
 optional = true
 
-[dependencies.console]
-version = "0.15"
+[dependencies.crossterm]
+version = "0.28"
 optional = true
 
 [dev-dependencies]

@@ -7,6 +7,18 @@ pub fn generate_stereo_pair(
 	depth: &Array2<f32>,
 	max_disparity: u32,
 ) -> SpatialResult<(DynamicImage, DynamicImage)> {
+	generate_stereo_pair_with_progress(image, depth, max_disparity, None::<fn(f64)>)
+}
+
+pub fn generate_stereo_pair_with_progress<F>(
+	image: &DynamicImage,
+	depth: &Array2<f32>,
+	max_disparity: u32,
+	mut progress_callback: Option<F>,
+) -> SpatialResult<(DynamicImage, DynamicImage)>
+where
+	F: FnMut(f64),
+{
 	let img_rgb = image.to_rgb8();
 	let width = img_rgb.width() as usize;
 	let height = img_rgb.height() as usize;
@@ -32,9 +44,18 @@ pub fn generate_stereo_pair(
 				}
 			}
 		}
+		
+		if let Some(ref mut cb) = progress_callback {
+			let warp_progress = (y as f64 / height as f64) * 50.0;
+			cb(warp_progress);
+		}
 	}
 
-	fill_disocclusions(&mut right_rgb, &filled, width, height);
+	if let Some(ref mut cb) = progress_callback {
+		fill_disocclusions_with_progress(&mut right_rgb, &filled, width, height, Some(cb));
+	} else {
+		fill_disocclusions(&mut right_rgb, &filled, width, height);
+	}
 
 	let left_image = image.clone();
 	let right_image = DynamicImage::ImageRgb8(right_rgb);
@@ -73,6 +94,18 @@ fn fill_disocclusions(
 	width: usize,
 	height: usize,
 ) {
+	fill_disocclusions_with_progress(image, filled, width, height, None::<fn(f64)>);
+}
+
+fn fill_disocclusions_with_progress<F>(
+	image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
+	filled: &[bool],
+	width: usize,
+	height: usize,
+	mut progress_callback: Option<F>,
+) where
+	F: FnMut(f64),
+{
 	let original = image.clone();
 
 	for y in 0..height {
@@ -104,6 +137,11 @@ fn fill_disocclusions(
 				(None, None) => continue,
 			};
 			image.put_pixel(x as u32, y as u32, fill);
+		}
+		
+		if let Some(cb) = progress_callback.as_mut() {
+			let fill_progress = 50.0 + (y as f64 / height as f64) * 50.0;
+			cb(fill_progress);
 		}
 	}
 }

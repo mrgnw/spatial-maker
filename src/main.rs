@@ -1,12 +1,17 @@
 use clap::{Parser, Subcommand};
-use console::style;
-use indicatif::{ProgressBar, ProgressStyle};
 use spatial_maker::{
-	process_photo, process_video, ImageEncoding, MVHEVCConfig, NormalizeMode, OutputFormat,
+	process_video, ImageEncoding, MVHEVCConfig, NormalizeMode, OutputFormat,
 	OutputOptions, OutputType, SpatialConfig, VideoProgress,
 	needs_stereo, parse_output_types,
+	tui::{self, AppState, FileStatus, MediaType},
+	load_image, model, generate_stereo_pair_with_progress,
+	needs_depth, depth_formats, save_depth_map, load_depth_map, save_stereo_image,
+	CoreMLDepthEstimator,
 };
 use std::path::PathBuf;
+use std::time::Instant;
+use std::path::Path;
+use tokio::sync::mpsc;
 
 #[derive(Parser)]
 #[command(name = "spatial-maker")]
@@ -63,6 +68,10 @@ struct Cli {
 	/// Depth normalization mode for video: running (default), per-frame, global (two-pass)
 	#[arg(long, default_value = "running")]
 	normalize: String,
+
+	/// Force regeneration of depth maps even if they already exist
+	#[arg(short, long)]
+	force: bool,
 }
 
 #[derive(Subcommand)]
@@ -79,11 +88,6 @@ enum Commands {
 enum SelfAction {
 	/// Download and install the latest release
 	Update,
-}
-
-enum MediaType {
-	Photo,
-	Video,
 }
 
 fn detect_media_type(path: &PathBuf) -> MediaType {
@@ -107,8 +111,6 @@ fn generate_output_base(input: &PathBuf, model: &str) -> PathBuf {
 	parent.join(format!("{}-{}", stem, model))
 }
 
-
-
 fn model_display_name(encoder_size: &str) -> (&str, u32) {
 	match encoder_size {
 		"s" | "small" => ("small", 48),
@@ -118,209 +120,13 @@ fn model_display_name(encoder_size: &str) -> (&str, u32) {
 	}
 }
 
-async fn process_single(
-	input: &PathBuf,
-	output: PathBuf,
-	config: SpatialConfig,
-	output_types: &[OutputType],
-	cli: &Cli,
-) -> Result<(), Box<dyn std::error::Error>> {
-	let media_type = detect_media_type(input);
-
-	match media_type {
-		MediaType::Photo => {
-			let has_stereo = needs_stereo(output_types);
-
-			let layout = if has_stereo {
-				let stereo = spatial_maker::stereo_types(output_types);
-				match stereo.first() {
-					Some(OutputType::TopAndBottom) => OutputFormat::TopAndBottom,
-					Some(OutputType::Separate) => OutputFormat::Separate,
-					_ => OutputFormat::SideBySide,
-				}
-			} else {
-				OutputFormat::SideBySide
-			};
-
-			let has_spatial = output_types.iter().any(|t| matches!(t, OutputType::Spatial));
-
-			let output_options = OutputOptions {
-				layout,
-				image_format: ImageEncoding::Jpeg {
-					quality: cli.quality,
-				},
-				mvhevc: if has_spatial {
-					Some(MVHEVCConfig {
-						spatial_cli_path: None,
-						enabled: true,
-						quality: cli.quality,
-						keep_intermediate: has_stereo && output_types.iter().any(|t| matches!(t, OutputType::SideBySide | OutputType::TopAndBottom | OutputType::Separate)),
-					})
-				} else {
-					None
-				},
-			};
-
-			let filename = input.file_name().and_then(|s| s.to_str()).unwrap_or("?");
-			eprintln!("{} {}", style("🖼").cyan(), style(filename).bold());
-
-			let spinner = ProgressBar::new_spinner();
-			spinner.set_style(
-				ProgressStyle::default_spinner()
-					.template("{spinner:.cyan} {msg}")
-					.unwrap()
-			);
-			spinner.set_message("Processing...");
-			spinner.enable_steady_tick(std::time::Duration::from_millis(80));
-
-			let result = process_photo(input, &output, config.clone(), output_types, output_options).await?;
-
-			spinner.finish_and_clear();
-			let (model_name, model_mb) = model_display_name(&cli.model);
-			eprintln!(
-				"{} {} / {} MB / depth-anything-v2-{}",
-				style("✔").green().bold(),
-				style("done").green(),
-				model_mb,
-				model_name,
-			);
-
-			for path in &result.depth_paths {
-				let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("?");
-				eprintln!("{} {}", style("→").dim(), style(name).dim());
-			}
-			for path in &result.stereo_paths {
-				let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("?");
-				eprintln!("{} {}", style("→").dim(), style(name).dim());
-			}
-		}
-		MediaType::Video => {
-			let filename = input.file_name().and_then(|s| s.to_str()).unwrap_or("?");
-			eprintln!("{} {}", style("🎥").cyan(), style(filename).bold());
-
-			let (model_name, model_mb) = model_display_name(&cli.model);
-			let model_info = format!("model loaded / {} MB / depth-anything-v2-{}", model_mb, model_name);
-
-			let spinner = ProgressBar::new_spinner();
-			spinner.set_style(
-				ProgressStyle::default_spinner()
-					.template("{spinner:.cyan} {msg}")
-					.unwrap()
-			);
-			spinner.set_message("Loading model...");
-			spinner.enable_steady_tick(std::time::Duration::from_millis(80));
-
-			let start = std::time::Instant::now();
-
-			let pb = ProgressBar::new(100);
-			pb.set_style(
-				ProgressStyle::default_bar()
-					.template("{msg} {bar:20.cyan/blue} {pos:>3}% {prefix}")
-					.unwrap()
-					.progress_chars("━╸─")
-			);
-
-			let pb_inner = pb.clone();
-			let start_clone = start.clone();
-			let model_loaded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-			let model_loaded_clone = model_loaded.clone();
-			let spinner_clone = spinner.clone();
-
-			process_video(
-				input,
-				&output,
-				config,
-				output_types,
-				Some(Box::new(move |progress: VideoProgress| {
-					if !model_loaded_clone.load(std::sync::atomic::Ordering::Relaxed) {
-						model_loaded_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-						spinner_clone.finish_and_clear();
-						eprintln!(
-							"{} {}",
-							style("✔").green().bold(),
-							model_info,
-						);
-					}
-
-					let elapsed = start_clone.elapsed().as_secs_f64();
-					let fps = if elapsed > 0.1 && progress.current_frame > 0 {
-						progress.current_frame as f64 / elapsed
-					} else {
-						0.0
-					};
-
-				match progress.stage.as_str() {
-					"scanning" => {
-						pb_inner.set_message(format!("{}", style("scanning depths").yellow()));
-						let pct = if progress.total_frames > 0 {
-							(progress.current_frame as f64 / progress.total_frames as f64 * 100.0) as u64
-						} else {
-							0
-						};
-						pb_inner.set_position(pct);
-						pb_inner.set_prefix(format!("{}/{}", progress.current_frame, progress.total_frames));
-					}
-					"extracting" => {
-						pb_inner.set_message(format!("{}", style("loading").yellow()));
-						pb_inner.set_position(0);
-					}
-						"processing" => {
-							let eta_secs = if fps > 0.1 {
-								let remaining = progress.total_frames.saturating_sub(progress.current_frame);
-								remaining as f64 / fps
-							} else {
-								0.0
-							};
-
-							let eta_str = if eta_secs > 60.0 {
-								format!("{}m {:02}s", eta_secs as u64 / 60, eta_secs as u64 % 60)
-							} else {
-								format!("{:.0}s", eta_secs)
-							};
-
-							pb_inner.set_message(format!(
-								"{:>5.1} fps",
-								fps,
-							));
-							pb_inner.set_prefix(format!(
-								"{}/{} eta {}",
-								progress.current_frame,
-								progress.total_frames,
-								eta_str,
-							));
-							pb_inner.set_position(progress.percent as u64);
-						}
-						"encoding" => {
-							pb_inner.set_message(format!("{}", style("encoding").yellow()));
-							pb_inner.set_position(100);
-							pb_inner.set_prefix(String::new());
-						}
-						"packaging" => {
-							pb_inner.set_message(format!("{}", style("packaging MV-HEVC").yellow()));
-						}
-						"complete" => {
-							pb_inner.finish_and_clear();
-						}
-						_ => {}
-					}
-				})),
-			)
-			.await?;
-
-			pb.finish_and_clear();
-
-			let elapsed = start.elapsed().as_secs_f64();
-			let out_name = output.file_name().and_then(|s| s.to_str()).unwrap_or("?");
-			eprintln!(
-				"{} {} ({:.1}s)",
-				style("→").green().bold(),
-				style(out_name).white(),
-				elapsed,
-			);
-		}
-	}
-
-	Ok(())
+enum TuiEvent {
+	FileStarted(usize),
+	StageUpdate { index: usize, stage: String, progress: f64 },
+	FileDone { index: usize, outputs: Vec<String>, duration: std::time::Duration },
+	FileError { index: usize, error: String },
+	VideoProgress { index: usize, progress: VideoProgress, fps: f64, eta: String },
+	AllDone,
 }
 
 #[tokio::main]
@@ -363,41 +169,358 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		normalize_mode,
 	};
 
-	let total = cli.inputs.len();
-	let mut errors = Vec::new();
+	let (model_name, model_mb) = model_display_name(&cli.model);
 
-	for (i, input) in cli.inputs.iter().enumerate() {
-		if total > 1 {
-			eprintln!(
-				"{} {}/{}",
-				style("─").dim(),
-				style(i + 1).bold(),
-				style(total).dim(),
-			);
+	let filenames: Vec<(String, MediaType)> = cli
+		.inputs
+		.iter()
+		.map(|p| {
+			let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+			let mt = detect_media_type(p);
+			(name, mt)
+		})
+		.collect();
+
+	let mut state = AppState::new(filenames, model_name, model_mb);
+	let mut terminal = tui::init_terminal()?;
+
+	let (tx, mut rx) = mpsc::unbounded_channel::<TuiEvent>();
+
+	let inputs_owned: Vec<PathBuf> = cli.inputs.clone();
+	let output_opt = cli.output.clone();
+	let model_str = cli.model.clone();
+	let quality = cli.quality;
+	let force = cli.force;
+	let output_types_owned = output_types.clone();
+	let config_owned = config.clone();
+
+	tokio::spawn(async move {
+		for (i, input) in inputs_owned.iter().enumerate() {
+			let _ = tx.send(TuiEvent::FileStarted(i));
+
+			let output = output_opt
+				.clone()
+				.unwrap_or_else(|| generate_output_base(input, &model_str));
+
+			let file_start = Instant::now();
+
+			let result = process_file(
+				&tx,
+				i,
+				input,
+				output,
+				config_owned.clone(),
+				&output_types_owned,
+				quality,
+				force,
+			)
+			.await;
+
+			let duration = file_start.elapsed();
+
+			match result {
+				Ok(outputs) => {
+					let _ = tx.send(TuiEvent::FileDone { index: i, outputs, duration });
+				}
+				Err(e) => {
+					let _ = tx.send(TuiEvent::FileError {
+						index: i,
+						error: e.to_string(),
+					});
+				}
+			}
 		}
+		let _ = tx.send(TuiEvent::AllDone);
+	});
 
-		let output = cli
-			.output
-			.clone()
-			.unwrap_or_else(|| generate_output_base(input, &cli.model));
+	let mut tick_interval = tokio::time::interval(std::time::Duration::from_millis(100));
+	let mut done = false;
 
-		if let Err(e) = process_single(input, output, config.clone(), &output_types, &cli).await {
-			eprintln!("{} {:?}: {}", style("✗").red().bold(), input, e);
-			errors.push((input.clone(), e));
+	loop {
+		tokio::select! {
+			_ = tick_interval.tick() => {
+				tui::render_frame(&mut terminal, &state)?;
+			}
+			event = rx.recv() => {
+				match event {
+				Some(TuiEvent::FileStarted(i)) => {
+					state.mark_processing(i);
+				}
+				Some(TuiEvent::StageUpdate { index, stage, progress }) => {
+					state.update_stage(index, stage, progress);
+				}
+					Some(TuiEvent::FileDone { index, outputs, duration }) => {
+						state.mark_done(index, outputs, duration);
+						let file_state = state.files[index].clone();
+						tui::insert_completed_line(&mut terminal, &file_state, index, &state)?;
+					}
+					Some(TuiEvent::FileError { index, error }) => {
+						state.mark_error(index, error);
+						let file_state = state.files[index].clone();
+						tui::insert_completed_line(&mut terminal, &file_state, index, &state)?;
+					}
+					Some(TuiEvent::VideoProgress { index, progress, fps, eta }) => {
+						state.update_video_progress(index, &progress, fps, eta);
+					}
+					Some(TuiEvent::AllDone) | None => {
+						done = true;
+					}
+				}
+				tui::render_frame(&mut terminal, &state)?;
+				if done {
+					break;
+				}
+			}
 		}
 	}
 
-	if !errors.is_empty() {
+	tui::restore_terminal();
+
+	let error_count = state
+		.files
+		.iter()
+		.filter(|f| matches!(f.status, FileStatus::Error(_)))
+		.count();
+
+	if error_count > 0 {
 		eprintln!(
-			"\n{} {}/{} files failed",
-			style("✗").red().bold(),
-			errors.len(),
-			total,
+			"\n{}/{} files failed",
+			error_count,
+			state.total,
 		);
 		std::process::exit(1);
 	}
 
 	Ok(())
+}
+
+async fn process_file(
+	tx: &mpsc::UnboundedSender<TuiEvent>,
+	index: usize,
+	input: &PathBuf,
+	output: PathBuf,
+	config: SpatialConfig,
+	output_types: &[OutputType],
+	quality: u8,
+	force: bool,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+	let media_type = detect_media_type(input);
+
+	match media_type {
+		MediaType::Photo => {
+			let parent = output.parent().unwrap_or_else(|| Path::new("."));
+			let stem = output.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+
+			let do_depth = needs_depth(output_types);
+			let do_stereo = needs_stereo(output_types);
+
+			let depth_paths: Vec<(std::path::PathBuf, spatial_maker::DepthFormat)> = if do_depth {
+				depth_formats(output_types)
+					.into_iter()
+					.map(|fmt| {
+						let filename = format!("{}-depth{}.{}", stem, fmt.suffix(), fmt.extension());
+						(parent.join(&filename), fmt)
+					})
+					.collect()
+			} else {
+				Vec::new()
+			};
+
+			let all_depth_exist = !depth_paths.is_empty() && depth_paths.iter().all(|(p, _)| p.exists());
+			let skip_estimation = all_depth_exist && !force;
+
+			let mut outputs = Vec::new();
+
+			let depth_map = if skip_estimation {
+				let _ = tx.send(TuiEvent::StageUpdate {
+					index,
+					stage: "depth cached".to_string(),
+					progress: 1.0,
+				});
+
+				for (p, _) in &depth_paths {
+					if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+						outputs.push(name.to_string());
+					}
+				}
+
+				if do_stereo {
+					let best = depth_paths.iter()
+						.find(|(_, fmt)| matches!(fmt, spatial_maker::DepthFormat::Png16))
+						.or_else(|| depth_paths.iter().find(|(_, fmt)| matches!(fmt, spatial_maker::DepthFormat::Png)))
+						.or_else(|| depth_paths.first())
+						.map(|(p, _)| p);
+					match best {
+						Some(p) => Some(load_depth_map(p)?),
+						None => None,
+					}
+				} else {
+					None
+				}
+			} else {
+				let _ = tx.send(TuiEvent::StageUpdate {
+					index,
+					stage: "loading".to_string(),
+					progress: 0.0,
+				});
+				let input_image_for_depth = load_image(input).await?;
+
+				let _ = tx.send(TuiEvent::StageUpdate {
+					index,
+					stage: "loading model".to_string(),
+					progress: 0.0,
+				});
+				model::ensure_model_exists::<fn(u64, u64)>(&config.encoder_size, None).await?;
+				let model_path = model::find_model(&config.encoder_size)?;
+				let model_str = model_path.to_str().ok_or("Invalid model path encoding")?;
+				let estimator = CoreMLDepthEstimator::new(model_str)?;
+
+				let _ = tx.send(TuiEvent::StageUpdate {
+					index,
+					stage: "estimating depth".to_string(),
+					progress: 0.0,
+				});
+				let dm = estimator.estimate(&input_image_for_depth)?;
+
+				if do_depth {
+					let _ = tx.send(TuiEvent::StageUpdate {
+						index,
+						stage: "saving depth".to_string(),
+						progress: 0.0,
+					});
+
+					for (depth_path, fmt) in &depth_paths {
+						save_depth_map(&dm, depth_path, *fmt)?;
+						if let Some(name) = depth_path.file_name().and_then(|s| s.to_str()) {
+							outputs.push(name.to_string());
+						}
+					}
+				}
+
+				Some(dm)
+			};
+
+			if do_stereo {
+				let dm = depth_map.as_ref().ok_or("Depth map required for stereo but not available")?;
+				let input_image = load_image(input).await?;
+
+				let _ = tx.send(TuiEvent::StageUpdate {
+					index,
+					stage: "generating stereo".to_string(),
+					progress: 0.0,
+				});
+
+				let tx_clone = tx.clone();
+				let (left, right) = generate_stereo_pair_with_progress(
+					&input_image,
+					dm,
+					config.max_disparity,
+					Some(move |progress| {
+						let _ = tx_clone.send(TuiEvent::StageUpdate {
+							index,
+							stage: "generating stereo".to_string(),
+							progress,
+						});
+					}),
+				)?;
+
+				let _ = tx.send(TuiEvent::StageUpdate {
+					index,
+					stage: "saving".to_string(),
+					progress: 0.0,
+				});
+
+				let stereo = spatial_maker::stereo_types(output_types);
+				let layout = match stereo.first() {
+					Some(OutputType::TopAndBottom) => OutputFormat::TopAndBottom,
+					Some(OutputType::Separate) => OutputFormat::Separate,
+					_ => OutputFormat::SideBySide,
+				};
+
+				let has_spatial = output_types.iter().any(|t| matches!(t, OutputType::Spatial));
+
+				let output_options = OutputOptions {
+					layout,
+					image_format: ImageEncoding::Jpeg { quality },
+					mvhevc: if has_spatial {
+						Some(MVHEVCConfig {
+							spatial_cli_path: None,
+							enabled: true,
+							quality,
+							keep_intermediate: output_types.iter().any(|t| matches!(t, OutputType::SideBySide | OutputType::TopAndBottom | OutputType::Separate)),
+						})
+					} else {
+						None
+					},
+				};
+
+				let src_ext = input.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+				let stereo_ext = match src_ext.as_str() {
+					"heic" | "heif" | "avif" | "jxl" => "jpg",
+					"" => "jpg",
+					other => other,
+				};
+				let parent = output.parent().unwrap_or_else(|| Path::new("."));
+				let stem = output.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+				let stereo_path = parent.join(format!("{}-spatial.{}", stem, stereo_ext));
+				save_stereo_image(&left, &right, &stereo_path, output_options)?;
+
+				if let Some(name) = stereo_path.file_name().and_then(|s| s.to_str()) {
+					outputs.push(name.to_string());
+				}
+			}
+
+			Ok(outputs)
+		}
+		MediaType::Video => {
+			let start = Instant::now();
+			let tx_clone = tx.clone();
+
+			process_video(
+				input,
+				&output,
+				config,
+				output_types,
+				Some(Box::new(move |progress: VideoProgress| {
+					let elapsed = start.elapsed().as_secs_f64();
+					let fps = if elapsed > 0.1 && progress.current_frame > 0 {
+						progress.current_frame as f64 / elapsed
+					} else {
+						0.0
+					};
+
+					let eta = if fps > 0.1 {
+						let remaining = progress.total_frames.saturating_sub(progress.current_frame);
+						let eta_secs = remaining as f64 / fps;
+						if eta_secs > 60.0 {
+							format!("{}m{:02}s", eta_secs as u64 / 60, eta_secs as u64 % 60)
+						} else {
+							format!("{:.0}s", eta_secs)
+						}
+					} else {
+						String::new()
+					};
+
+					let _ = tx_clone.send(TuiEvent::VideoProgress {
+						index,
+						progress,
+						fps,
+						eta,
+					});
+				})),
+				force,
+			)
+			.await?;
+
+			let out_name = output
+				.file_name()
+				.and_then(|s| s.to_str())
+				.unwrap_or("?")
+				.to_string();
+
+			Ok(vec![out_name])
+		}
+	}
 }
 
 async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
@@ -449,14 +572,7 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 		.and_then(|a| a["browser_download_url"].as_str())
 		.ok_or_else(|| format!("No release asset found for {}", target))?;
 
-	let pb = ProgressBar::new_spinner();
-	pb.set_style(
-		ProgressStyle::default_spinner()
-			.template("{spinner:.cyan} {msg}")
-			.unwrap()
-	);
-	pb.set_message(format!("Downloading {}...", asset_name));
-	pb.enable_steady_tick(std::time::Duration::from_millis(80));
+	eprintln!("Downloading {}...", asset_name);
 
 	let response = client
 		.get(download_url)
@@ -466,7 +582,7 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 
 	let bytes = response.bytes().await?;
 
-	pb.set_message("Extracting...");
+	eprintln!("Extracting...");
 
 	let decoder = flate2::read::GzDecoder::new(&bytes[..]);
 	let mut archive = tar::Archive::new(decoder);
@@ -479,7 +595,6 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 
 	let new_binary = temp_dir.join("spatial-maker");
 	if !new_binary.exists() {
-		pb.finish_and_clear();
 		return Err("Binary not found in release archive".into());
 	}
 
@@ -513,11 +628,9 @@ async fn self_update() -> Result<(), Box<dyn std::error::Error>> {
 
 	let _ = std::fs::remove_dir_all(&temp_dir);
 
-	pb.finish_and_clear();
 	eprintln!(
-		"{} Updated to {} at {}",
-		style("✔").green().bold(),
-		style(format!("v{}", latest_version)).green(),
+		"Updated to v{} at {}",
+		latest_version,
 		install_path.display(),
 	);
 
