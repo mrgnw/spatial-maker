@@ -3025,6 +3025,7 @@ dependencies = [
  "ndarray 0.16.1",
  "ort",
  "ratatui",
+ "rayon",
  "reqwest",
  "serde",
  "serde_json",
