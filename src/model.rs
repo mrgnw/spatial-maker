@@ -19,6 +19,8 @@ pub struct ModelMetadata {
 	pub filename: String,
 	pub url: String,
 	pub size_mb: u32,
+	pub input_size: u32,
+	pub inverted_depth: bool,
 }
 
 impl ModelMetadata {
@@ -29,21 +31,35 @@ impl ModelMetadata {
 				filename: "DepthAnythingV2SmallF16.mlpackage".to_string(),
 				url: "https://huggingface.co/mrgnw/depth-anything-v2-coreml/resolve/main/DepthAnythingV2SmallF16.mlpackage.tar.gz".to_string(),
 				size_mb: 48,
+				input_size: 518,
+				inverted_depth: false,
 			}),
 			"b" | "base" => Ok(ModelMetadata {
 				name: "depth-anything-v2-base".to_string(),
 				filename: "DepthAnythingV2BaseF16.mlpackage".to_string(),
 				url: "https://huggingface.co/mrgnw/depth-anything-v2-coreml/resolve/main/DepthAnythingV2BaseF16.mlpackage.tar.gz".to_string(),
 				size_mb: 186,
+				input_size: 518,
+				inverted_depth: false,
 			}),
 			"l" | "large" => Ok(ModelMetadata {
 				name: "depth-anything-v2-large".to_string(),
 				filename: "DepthAnythingV2LargeF16.mlpackage".to_string(),
 				url: "https://huggingface.co/mrgnw/depth-anything-v2-coreml/resolve/main/DepthAnythingV2LargeF16.mlpackage.tar.gz".to_string(),
 				size_mb: 638,
+				input_size: 518,
+				inverted_depth: false,
+			}),
+			"da3" | "v3" => Ok(ModelMetadata {
+				name: "depth-anything-v3-mono-large".to_string(),
+				filename: "DepthAnythingV3Mono.mlpackage".to_string(),
+				url: "https://huggingface.co/mrgnw/depth-anything-v3-coreml/resolve/main/DepthAnythingV3Mono.mlpackage.tar.gz".to_string(),
+				size_mb: 638,
+				input_size: 504,
+				inverted_depth: true,
 			}),
 			other => Err(SpatialError::ConfigError(
-				format!("Unknown encoder size: '{}'. Use 's', 'b', or 'l'", other)
+				format!("Unknown encoder size: '{}'. Use 's', 'b', 'l', or 'da3'", other)
 			)),
 		}
 	}
@@ -56,18 +72,24 @@ impl ModelMetadata {
 				filename: "depth_anything_v2_small.onnx".to_string(),
 				url: "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx".to_string(),
 				size_mb: 99,
+				input_size: 518,
+				inverted_depth: false,
 			}),
 			"b" | "base" => Ok(ModelMetadata {
 				name: "depth-anything-v2-base".to_string(),
 				filename: "depth_anything_v2_base.onnx".to_string(),
 				url: "https://huggingface.co/onnx-community/depth-anything-v2-base/resolve/main/onnx/model.onnx".to_string(),
 				size_mb: 380,
+				input_size: 518,
+				inverted_depth: false,
 			}),
 			"l" | "large" => Ok(ModelMetadata {
 				name: "depth-anything-v2-large".to_string(),
 				filename: "depth_anything_v2_large.onnx".to_string(),
 				url: "https://huggingface.co/onnx-community/depth-anything-v2-large/resolve/main/onnx/model.onnx".to_string(),
 				size_mb: 1300,
+				input_size: 518,
+				inverted_depth: false,
 			}),
 			other => Err(SpatialError::ConfigError(
 				format!("Unknown encoder size: '{}'. Use 's', 'b', or 'l'", other)
