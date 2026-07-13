@@ -6,6 +6,7 @@
 #     "numpy<2",
 #     "torch==2.7.0",
 #     "jkp-depth-anything-v2",
+#     "safetensors",
 # ]
 # ///
 """
@@ -55,6 +56,24 @@ MODEL_CONFIGS = {
 		'hf_repo': 'depth-anything/Depth-Anything-V2-Large',
 		'license': 'CC-BY-NC-4.0',
 	},
+	'distill-vits': {
+		'encoder': 'vits',
+		'features': 64,
+		'out_channels': [48, 96, 192, 384],
+		'checkpoint': 'distill_any_depth_vits.safetensors',
+		'output': 'DistillAnyDepthSmallF16.mlpackage',
+		'hf_repo': 'xingyang1/Distill-Any-Depth',
+		'license': 'Apache-2.0',
+	},
+	'distill-vitb': {
+		'encoder': 'vitb',
+		'features': 128,
+		'out_channels': [96, 192, 384, 768],
+		'checkpoint': 'distill_any_depth_vitb.safetensors',
+		'output': 'DistillAnyDepthBaseF16.mlpackage',
+		'hf_repo': 'xingyang1/Distill-Any-Depth',
+		'license': 'Apache-2.0',
+	},
 }
 
 INPUT_SIZE = 518
@@ -86,7 +105,7 @@ def convert_model(model_key: str, checkpoint_dir: Path, output_dir: Path):
 
 	if not checkpoint_path.exists():
 		print(f'Checkpoint not found: {checkpoint_path}')
-		print(f'Download:')
+		print('Download:')
 		print(f'  curl -L -o {checkpoint_path} \\')
 		print(f'    https://huggingface.co/{config["hf_repo"]}/resolve/main/{config["checkpoint"]}')
 		return False
@@ -97,7 +116,13 @@ def convert_model(model_key: str, checkpoint_dir: Path, output_dir: Path):
 		features=config['features'],
 		out_channels=config['out_channels'],
 	)
-	base_model.load_state_dict(torch.load(str(checkpoint_path), map_location='cpu'))
+	if checkpoint_path.suffix == '.safetensors':
+		from safetensors.torch import load_file
+
+		state_dict = load_file(str(checkpoint_path))
+	else:
+		state_dict = torch.load(str(checkpoint_path), map_location='cpu')
+	base_model.load_state_dict(state_dict)
 	base_model.eval()
 
 	model = NormalizedDepthModel(base_model)
