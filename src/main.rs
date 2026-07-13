@@ -33,7 +33,7 @@ struct Cli {
 	#[arg(short, long)]
 	output: Option<PathBuf>,
 
-	/// Model size: s (small, 48MB), b (base, 186MB), l (large, 638MB)
+	/// Model: s (small, 48MB), b (base, 186MB), l (large, 638MB), da3 (v3 mono large, 638MB)
 	#[arg(short, long, default_value = "s")]
 	model: String,
 
@@ -116,6 +116,7 @@ fn model_display_name(encoder_size: &str) -> (&str, u32) {
 		"s" | "small" => ("small", 48),
 		"b" | "base" => ("base", 186),
 		"l" | "large" => ("large", 638),
+		"da3" | "v3" => ("da3-mono-large", 638),
 		_ => (encoder_size, 0),
 	}
 }
@@ -373,7 +374,9 @@ async fn process_file(
 				model::ensure_model_exists::<fn(u64, u64)>(&config.encoder_size, None).await?;
 				let model_path = model::find_model(&config.encoder_size)?;
 				let model_str = model_path.to_str().ok_or("Invalid model path encoding")?;
-				let estimator = CoreMLDepthEstimator::new(model_str)?;
+				let meta = model::ModelMetadata::coreml(&config.encoder_size)?;
+				let estimator =
+					CoreMLDepthEstimator::new(model_str, meta.input_size, meta.inverted_depth)?;
 
 				let _ = tx.send(TuiEvent::StageUpdate {
 					index,

@@ -495,7 +495,12 @@ pub async fn process_video(
 		let model_str = model_path.to_str().ok_or_else(|| {
 			SpatialError::ModelError("Invalid model path encoding".to_string())
 		})?;
-		std::sync::Arc::new(crate::depth_coreml::CoreMLDepthEstimator::new(model_str)?)
+		let meta = crate::model::ModelMetadata::coreml(&config.encoder_size)?;
+		std::sync::Arc::new(crate::depth_coreml::CoreMLDepthEstimator::new(
+			model_str,
+			meta.input_size,
+			meta.inverted_depth,
+		)?)
 	};
 
 	let mut depth_processor = DepthProcessor::new(

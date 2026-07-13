@@ -165,7 +165,8 @@ pub async fn process_photo(
 			let model_str = model_path.to_str().ok_or_else(|| {
 				SpatialError::ModelError("Invalid model path encoding".to_string())
 			})?;
-			let estimator = CoreMLDepthEstimator::new(model_str)?;
+			let meta = model::ModelMetadata::coreml(&config.encoder_size)?;
+			let estimator = CoreMLDepthEstimator::new(model_str, meta.input_size, meta.inverted_depth)?;
 			estimator.estimate(&input_image)?
 		};
 
