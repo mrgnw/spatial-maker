@@ -168,7 +168,7 @@ def convert_model(model_key: str, checkpoint_dir: Path, output_dir: Path):
 def main():
 	repo_root = Path(__file__).parent.parent.parent
 	checkpoint_dir = repo_root / 'checkpoints'
-	output_dir = checkpoint_dir
+	output_dir = Path.home() / '.spatial-maker/checkpoints'
 	checkpoint_dir.mkdir(exist_ok=True)
 
 	models_to_convert = sys.argv[1:] if len(sys.argv) > 1 else list(MODEL_CONFIGS.keys())
