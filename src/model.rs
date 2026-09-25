@@ -176,6 +176,14 @@ where
 	}
 
 	let checkpoint_dir = get_checkpoint_dir()?;
+	if checkpoint_dir.is_symlink() && !checkpoint_dir.exists() {
+		let target = std::fs::read_link(&checkpoint_dir).unwrap_or_default();
+		return Err(SpatialError::ConfigError(format!(
+			"Checkpoint dir {} links to {}, which is missing. Is the drive mounted?",
+			checkpoint_dir.display(),
+			target.display()
+		)));
+	}
 	tokio::fs::create_dir_all(&checkpoint_dir)
 		.await
 		.map_err(|e| {
@@ -316,4 +324,22 @@ where
 
 	tracing::info!("Model downloaded: {:?}", destination);
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[tokio::test]
+	async fn unmounted_checkpoint_link_fails_without_download() {
+		let dir = tempfile::tempdir().unwrap();
+		let link = dir.path().join("checkpoints");
+		std::os::unix::fs::symlink(dir.path().join("unmounted"), &link).unwrap();
+		std::env::set_var("SPATIAL_MAKER_CHECKPOINTS", &link);
+
+		let err = ensure_model_exists::<fn(u64, u64)>("da3", None).await.unwrap_err();
+
+		assert!(err.to_string().contains("Is the drive mounted?"), "{}", err);
+		assert!(!dir.path().join("unmounted").exists());
+	}
 }
