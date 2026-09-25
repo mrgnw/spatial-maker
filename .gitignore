@@ -15,7 +15,7 @@ samples/
 benchmark_test.log
 
 # Model checkpoints (large, download separately)
-checkpoints/
+/checkpoints
 
 # Output
 /output

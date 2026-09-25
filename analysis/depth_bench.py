@@ -28,8 +28,8 @@ MODELS = {
 	'da2-small': HOME_CKPT / 'DepthAnythingV2SmallF16.mlpackage',
 	'da2-base': HOME_CKPT / 'DepthAnythingV2BaseF16.mlpackage',
 	'da2-large': HOME_CKPT / 'DepthAnythingV2LargeF16.mlpackage',
-	'distill-small': REPO / 'checkpoints/DistillAnyDepthSmallF16.mlpackage',
-	'da3mono-large': HOME_CKPT / 'da3mono-coreml/DepthAnythingV3Mono.mlpackage',
+	'distill-small': HOME_CKPT / 'DistillAnyDepthSmallF16.mlpackage',
+	'da3mono-large': HOME_CKPT / 'DepthAnythingV3Mono.mlpackage',
 }
 
 INVERT_OUTPUT = {'da3mono-large'}
