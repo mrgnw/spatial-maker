@@ -17,7 +17,7 @@ exclude = [
 	"samples/",
 	"todos/",
 	"output/",
-	"checkpoints/",
+	"checkpoints",
 	"__pycache__/",
 	".venv/",
 	"scripts/",
