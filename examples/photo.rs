@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	let model_path = model::find_model(&args.encoder_size)?;
 
-	let estimator = OnnxDepthEstimator::new(model_path.to_str().unwrap())?;
+	let mut estimator = OnnxDepthEstimator::new(model_path.to_str().unwrap())?;
 
 	let start = std::time::Instant::now();
 	let depth_map = estimator.estimate(&input_image)?;
