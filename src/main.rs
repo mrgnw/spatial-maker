@@ -33,7 +33,8 @@ struct Cli {
 	#[arg(short, long)]
 	output: Option<PathBuf>,
 
-	/// Model: s (small, 48MB), b (base, 186MB, non-commercial), l (large, 638MB, non-commercial), da3 (v3 mono large, 638MB)
+	/// Model: s (small, 48MB), b (base, 186MB, non-commercial), l (large, 638MB, non-commercial), da3 (v3 mono large, 638MB),
+	/// vda (video depth anything small, temporally stable, 56MB)
 	#[arg(short, long, default_value = "s")]
 	model: String,
 

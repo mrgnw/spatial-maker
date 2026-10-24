@@ -547,6 +547,9 @@ pub async fn process_video(
 		}
 	}
 
+	#[cfg(all(target_os = "macos", feature = "coreml"))]
+	estimator.reset_stream();
+
 	let mut frame_rx = extract_frames(input_path, &metadata).await?;
 
 	let stereo_tx_opt;
