@@ -5,6 +5,8 @@ use image::DynamicImage;
 #[cfg(feature = "onnx")]
 use ndarray::Array2;
 #[cfg(feature = "onnx")]
+use ort::environment::Environment;
+#[cfg(feature = "onnx")]
 use ort::session::{builder::GraphOptimizationLevel, Session};
 
 #[cfg(feature = "onnx")]
@@ -17,12 +19,16 @@ const IMAGENET_STD: [f32; 3] = [0.229, 0.224, 0.225];
 #[cfg(feature = "onnx")]
 pub struct OnnxDepthEstimator {
 	session: Session,
+	_environment: Environment,
 }
 
 #[cfg(feature = "onnx")]
 impl OnnxDepthEstimator {
 	pub fn new(model_path: &str) -> SpatialResult<Self> {
-		let session = Session::builder()
+		let environment = ort::init()
+			.build()
+			.map_err(|e| SpatialError::ModelError(format!("Failed to create environment: {}", e)))?;
+		let session = Session::builder(&environment)
 			.map_err(|e| SpatialError::ModelError(format!("Failed to create session: {}", e)))?
 			.with_optimization_level(GraphOptimizationLevel::Level3)
 			.map_err(|e| SpatialError::ModelError(format!("Failed to set opt level: {}", e)))?
@@ -31,7 +37,10 @@ impl OnnxDepthEstimator {
 			.commit_from_file(model_path)
 			.map_err(|e| SpatialError::ModelError(format!("Failed to load ONNX model: {}", e)))?;
 
-		Ok(Self { session })
+		Ok(Self {
+			session,
+			_environment: environment,
+		})
 	}
 
 	pub fn estimate(&mut self, image: &DynamicImage) -> SpatialResult<Array2<f32>> {
