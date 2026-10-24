@@ -13,7 +13,7 @@ import numpy as np
 from PIL import Image
 
 OUT = Path(os.environ.get('DEPTH_BENCH_OUT', Path(__file__).parent / 'out'))
-MODELS = sys.argv[1:] or sorted(d.name for d in OUT.iterdir() if d.is_dir() and d.name != 'frames')
+MODELS = sys.argv[1:] or sorted(d.name for d in OUT.iterdir() if any(d.glob('frame_*.png')))
 
 print('| model | mean frame-to-frame delta (top half, 0-255) |')
 print('|---|---|')
