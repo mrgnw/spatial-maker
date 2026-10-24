@@ -1,8 +1,8 @@
-#!/usr/bin/env -S uv run --python 3.11 --script
+#!/usr/bin/env -S uv run --python 3.12 --script
 # /// script
-# requires-python = ">=3.11,<3.12"
+# requires-python = ">=3.12,<3.13"
 # dependencies = [
-#     "coremltools==7.2",
+#     "coremltools==9.0",
 #     "numpy<2",
 #     "pillow",
 # ]
@@ -12,7 +12,9 @@ Benchmark CoreML depth models on the M4 Pro: warm ms/frame + depth map PNGs for 
 Usage: uv run analysis/depth_bench.py
 """
 
+import os
 import statistics
+import sys
 import time
 from pathlib import Path
 
@@ -22,7 +24,8 @@ from PIL import Image
 
 HOME_CKPT = Path.home() / '.spatial-maker/checkpoints'
 REPO = Path(__file__).parent.parent
-OUT = REPO / 'analysis/out'
+OUT = Path(os.environ.get('DEPTH_BENCH_OUT', REPO / 'analysis/out'))
+CANDIDATES = Path(os.environ.get('DEPTH_BENCH_CANDIDATES', HOME_CKPT))
 
 MODELS = {
 	'da2-small': HOME_CKPT / 'DepthAnythingV2SmallF16.mlpackage',
@@ -30,9 +33,13 @@ MODELS = {
 	'da2-large': HOME_CKPT / 'DepthAnythingV2LargeF16.mlpackage',
 	'distill-small': HOME_CKPT / 'DistillAnyDepthSmallF16.mlpackage',
 	'da3mono-large': HOME_CKPT / 'DepthAnythingV3Mono.mlpackage',
+	'da3mono-large-new': CANDIDATES / 'DepthAnythingV3Mono.mlpackage',
+	'da3metric-large': CANDIDATES / 'DepthAnythingV3MetricLarge.mlpackage',
+	'da3-small': CANDIDATES / 'DepthAnythingV3Small.mlpackage',
+	'da3-base': CANDIDATES / 'DepthAnythingV3Base.mlpackage',
 }
 
-INVERT_OUTPUT = {'da3mono-large'}
+INVERT_OUTPUT = {n for n in MODELS if n.startswith('da3')}
 
 TEST_IMAGES = [REPO / 'test_baseline.jpg'] + sorted((OUT / 'frames').glob('frame_*.jpg'))
 
@@ -99,7 +106,8 @@ def bench_model(name, path):
 
 
 def main():
-	results = [r for r in (bench_model(n, p) for n, p in MODELS.items()) if r]
+	selected = sys.argv[1:] or list(MODELS)
+	results = [r for r in (bench_model(n, MODELS[n]) for n in selected) if r]
 
 	print('\n| model | input | load (s) | median ms | min | max |')
 	print('|---|---|---|---|---|---|')
