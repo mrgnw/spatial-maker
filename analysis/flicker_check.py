@@ -5,13 +5,15 @@
 # ///
 """Mean per-pixel change between consecutive depth frames, static top-half only. Lower = more stable."""
 
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
-OUT = Path(__file__).parent / 'out'
-MODELS = ['da2-small', 'da2-base', 'da2-large', 'distill-small', 'da3mono-large']
+OUT = Path(os.environ.get('DEPTH_BENCH_OUT', Path(__file__).parent / 'out'))
+MODELS = sys.argv[1:] or sorted(d.name for d in OUT.iterdir() if d.is_dir() and d.name != 'frames')
 
 print('| model | mean frame-to-frame delta (top half, 0-255) |')
 print('|---|---|')
