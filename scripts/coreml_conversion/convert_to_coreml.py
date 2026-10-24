@@ -45,7 +45,7 @@ MODEL_CONFIGS = {
 		'checkpoint': 'depth_anything_v2_vitb.pth',
 		'output': 'DepthAnythingV2BaseF16.mlpackage',
 		'hf_repo': 'depth-anything/Depth-Anything-V2-Base',
-		'license': 'Apache-2.0',
+		'license': 'CC-BY-NC-4.0',
 	},
 	'vitl': {
 		'encoder': 'vitl',
