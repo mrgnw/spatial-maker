@@ -69,7 +69,7 @@ tar = "0.4"
 ort = { version = "2.0.0-rc.11", features = ["half", "download-binaries"], optional = true }
 
 # Optional native decoders
-jxl-oxide = { version = "0.9", optional = true }
+jxl-oxide = { version = "0.12", optional = true }
 libheif-rs = { version = "2.1", optional = true }
 
 [dependencies.clap]
