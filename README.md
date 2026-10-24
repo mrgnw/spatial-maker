@@ -40,6 +40,15 @@ curl -L -o ~/.spatial-maker/checkpoints/depth_anything_v2_vitl.pth \
 
 You only need the model sizes you plan to use. `vits` (small) is a good default.
 
+| Model | Params | License |
+|-|-|-|
+| Depth Anything V2 Small | 24.8M | Apache-2.0 |
+| Depth Anything V2 Base | 97.5M | CC BY-NC 4.0 (non-commercial) |
+| Depth Anything V2 Large | 335.3M | CC BY-NC 4.0 (non-commercial) |
+| Depth Anything 3 Mono Large | 0.35B | Apache-2.0 |
+
+spatial-maker is MIT-licensed, but the Base and Large V2 weights are not: don't use them for commercial work.
+
 ## Usage
 
 ```bash

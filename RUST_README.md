@@ -115,6 +115,7 @@ Models are auto-downloaded from [HuggingFace](https://huggingface.co/mrgnw/depth
 | **Small** (default) | 48 MB | Good | ~85ms/frame | Apache-2.0 ✅ |
 | **Base** | 186 MB | Better | ~128ms/frame | CC-BY-NC-4.0 ⚠️ |
 | **Large** | 638 MB | Best | ~190ms/frame | CC-BY-NC-4.0 ⚠️ |
+| **DA3 Mono Large** (`da3`) | 638 MB | Best | ~275ms/frame | Apache-2.0 ✅ |
 
 ⚠️ Base and Large models are **non-commercial only** (CC-BY-NC-4.0). Small is Apache-2.0 (commercial OK).
 
