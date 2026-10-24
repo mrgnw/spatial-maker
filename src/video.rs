@@ -572,7 +572,7 @@ pub async fn process_video(
 		let depth_path = {
 			let stem = output_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
 			let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
-			parent.join(format!("{}-depth.mov", stem))
+			parent.join(format!("{}-depth.mp4", stem))
 		};
 
 		if !force && depth_path.exists() {
