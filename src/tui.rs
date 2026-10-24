@@ -1,7 +1,7 @@
 use std::io::{self, stdout};
 use std::time::{Duration, Instant};
 
-use crossterm::{
+use ratatui::crossterm::{
 	execute,
 	terminal::{disable_raw_mode, enable_raw_mode},
 };
@@ -362,7 +362,7 @@ pub fn init_terminal() -> io::Result<Terminal<ratatui::backend::CrosstermBackend
 
 pub fn restore_terminal() {
 	let _ = disable_raw_mode();
-	let _ = execute!(stdout(), crossterm::cursor::Show);
+	let _ = execute!(stdout(), ratatui::crossterm::cursor::Show);
 }
 
 pub fn render_frame(
