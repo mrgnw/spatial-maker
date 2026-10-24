@@ -60,7 +60,7 @@ serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 reqwest = { version = "0.13", features = ["stream", "json"] }
 futures-util = "0.3"
-dirs = "5.0"
+dirs = "7"
 tracing = "0.1"
 flate2 = "1"
 tar = "0.4"
