@@ -52,7 +52,7 @@ native-formats = ["avif", "jxl", "heic"]
 
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "tiff", "webp"] }
-ndarray = "0.16"
+ndarray = "0.17"
 rayon = "1"
 thiserror = "2"
 serde = { version = "1.0", features = ["derive"] }
