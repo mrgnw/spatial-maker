@@ -22,16 +22,19 @@ public func loadModel(_ pathPtr: UnsafePointer<CChar>) -> UnsafeMutableRawPointe
 			modelURL = url
 		}
 		
+		let probeConfig = MLModelConfiguration()
+		probeConfig.computeUnits = .cpuOnly
+		let streaming = StreamWindow.isStreaming(try MLModel(contentsOf: modelURL, configuration: probeConfig))
+
+		// The ANE compiler stalls on the streaming model's temporal attention; GPU runs it fine.
 		let config = MLModelConfiguration()
-		config.computeUnits = .all
-		
+		config.computeUnits = streaming ? .cpuAndGPU : .all
 		let model = try MLModel(contentsOf: modelURL, configuration: config)
 		if modelURL != url {
 			try? FileManager.default.removeItem(at: modelURL)
 		}
 
-		// Return retained pointer to model
-		return Unmanaged.passRetained(model as AnyObject).toOpaque()
+		return Unmanaged.passRetained(DepthModel(model: model, stream: streaming ? StreamWindow() : nil)).toOpaque()
 	} catch {
 		print("Failed to load CoreML model at: \(path)")
 		print("Error: \(error)")
@@ -41,7 +44,12 @@ public func loadModel(_ pathPtr: UnsafePointer<CChar>) -> UnsafeMutableRawPointe
 
 @_cdecl("coreml_unload_model")
 public func unloadModel(_ modelPtr: UnsafeMutableRawPointer) {
-	Unmanaged<AnyObject>.fromOpaque(modelPtr).release()
+	Unmanaged<DepthModel>.fromOpaque(modelPtr).release()
+}
+
+@_cdecl("coreml_reset_stream")
+public func resetStream(_ modelPtr: UnsafeMutableRawPointer) {
+	Unmanaged<DepthModel>.fromOpaque(modelPtr).takeUnretainedValue().stream?.reset()
 }
 
 @_cdecl("coreml_infer_depth")
@@ -52,7 +60,7 @@ public func inferDepth(
 	_ height: Int32,
 	_ outputPtr: UnsafeMutablePointer<Float>
 ) -> Int32 {
-	let model = Unmanaged<AnyObject>.fromOpaque(modelPtr).takeUnretainedValue() as! MLModel
+	let depthModel = Unmanaged<DepthModel>.fromOpaque(modelPtr).takeUnretainedValue()
 	let w = Int(width)
 	let h = Int(height)
 	
@@ -95,11 +103,15 @@ public func inferDepth(
 		}
 		
 		// Run inference with CVPixelBuffer
-		let inputFeature = try MLDictionaryFeatureProvider(
-			dictionary: ["image": MLFeatureValue(pixelBuffer: pixelBuffer)]
-		)
-		
-		let result = try model.prediction(from: inputFeature)
+		let image = MLFeatureValue(pixelBuffer: pixelBuffer)
+		let result: MLFeatureProvider
+		if let stream = depthModel.stream {
+			result = try stream.predict(depthModel.model, image: image)
+		} else {
+			result = try depthModel.model.prediction(
+				from: MLDictionaryFeatureProvider(dictionary: ["image": image])
+			)
+		}
 		
 		// Extract depth output
 		// Output shape: [1, height, width]
@@ -134,8 +146,116 @@ public func inferDepth(
 
 @_cdecl("coreml_get_model_info")
 public func getModelInfo(_ modelPtr: UnsafeMutableRawPointer) -> UnsafePointer<CChar>? {
-	let model = Unmanaged<AnyObject>.fromOpaque(modelPtr).takeUnretainedValue() as! MLModel
+	let model = Unmanaged<DepthModel>.fromOpaque(modelPtr).takeUnretainedValue().model
 	let desc = model.modelDescription
 	let info = "Model: \(desc.metadata[.description] ?? "Unknown")"
 	return UnsafePointer(strdup(info))
+}
+
+final class DepthModel {
+	let model: MLModel
+	let stream: StreamWindow?
+
+	init(model: MLModel, stream: StreamWindow?) {
+		self.model = model
+		self.stream = stream
+	}
+}
+
+// Temporal cache for Video Depth Anything streaming models (inputs cache0..7, outputs state0..7).
+// Mirrors VideoDepthAnything.infer_video_depth_one: frame 0 stays in the window for the whole video.
+final class StreamWindow {
+	static let windowLength = 31
+	static let layerCount = 8
+	static let dropAfterFrame = 10
+
+	var frames: [[[Float16]]] = []
+	var frameId = 0
+
+	static func isStreaming(_ model: MLModel) -> Bool {
+		model.modelDescription.inputDescriptionsByName["cache0"] != nil
+	}
+
+	func reset() {
+		frames = []
+		frameId = 0
+	}
+
+	func predict(_ model: MLModel, image: MLFeatureValue) throws -> MLFeatureProvider {
+		let shapes = try Self.cacheShapes(model)
+		if frames.isEmpty {
+			let zeros = shapes.map { [Float16](repeating: 0, count: $0[1] * $0[2]) }
+			let primed = try run(model, image: image, window: Array(repeating: zeros, count: Self.windowLength), shapes: shapes)
+			let primedStates = try Self.states(primed, shapes: shapes)
+			let result = try run(model, image: image, window: Array(repeating: primedStates, count: Self.windowLength), shapes: shapes)
+			push(try Self.states(result, shapes: shapes))
+			return result
+		}
+		let window = Array(frames[0..<2]) + Array(frames.suffix(Self.windowLength - 2))
+		let result = try run(model, image: image, window: window, shapes: shapes)
+		push(try Self.states(result, shapes: shapes))
+		return result
+	}
+
+	private func push(_ states: [[Float16]]) {
+		if frames.isEmpty {
+			frames = Array(repeating: states, count: Self.windowLength + 1)
+		} else {
+			frames.append(states)
+		}
+		if frameId > Self.dropAfterFrame {
+			frames.remove(at: 1)
+		}
+		frameId += 1
+		assert(frames.count <= Self.windowLength + Self.dropAfterFrame + 2)
+	}
+
+	private func run(_ model: MLModel, image: MLFeatureValue, window: [[[Float16]]], shapes: [[Int]]) throws -> MLFeatureProvider {
+		precondition(window.count == Self.windowLength)
+		var inputs: [String: MLFeatureValue] = ["image": image]
+		for layer in 0..<Self.layerCount {
+			let shape = shapes[layer]
+			let cache = try MLMultiArray(shape: shape.map { NSNumber(value: $0) }, dataType: .float16)
+			let frameSize = shape[1] * shape[2]
+			let dst = cache.dataPointer.assumingMemoryBound(to: Float16.self)
+			for (index, frame) in window.enumerated() {
+				precondition(frame[layer].count == frameSize)
+				frame[layer].withUnsafeBufferPointer { src in
+					(dst + index * frameSize).update(from: src.baseAddress!, count: frameSize)
+				}
+			}
+			inputs["cache\(layer)"] = MLFeatureValue(multiArray: cache)
+		}
+		return try model.prediction(from: MLDictionaryFeatureProvider(dictionary: inputs))
+	}
+
+	private static func cacheShapes(_ model: MLModel) throws -> [[Int]] {
+		try (0..<layerCount).map { layer in
+			guard let shape = model.modelDescription.inputDescriptionsByName["cache\(layer)"]?
+				.multiArrayConstraint?.shape.map({ $0.intValue }), shape.count == 3, shape[0] == windowLength
+			else {
+				throw NSError(domain: "CoreMLDepth", code: 1, userInfo: [NSLocalizedDescriptionKey: "bad cache\(layer) shape"])
+			}
+			return shape
+		}
+	}
+
+	private static func states(_ result: MLFeatureProvider, shapes: [[Int]]) throws -> [[Float16]] {
+		try (0..<layerCount).map { layer in
+			guard let state = result.featureValue(for: "state\(layer)")?.multiArrayValue else {
+				throw NSError(domain: "CoreMLDepth", code: 2, userInfo: [NSLocalizedDescriptionKey: "missing state\(layer)"])
+			}
+			let rows = shapes[layer][1]
+			let cols = shapes[layer][2]
+			let strides = state.strides.map { $0.intValue }
+			let src = state.dataPointer.assumingMemoryBound(to: Float16.self)
+			var out = [Float16](repeating: 0, count: rows * cols)
+			for row in 0..<rows {
+				for col in 0..<cols {
+					out[row * cols + col] = src[row * strides[1] + col * strides[2]]
+				}
+			}
+			return out
+		}
+	}
 }
