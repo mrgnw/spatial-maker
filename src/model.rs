@@ -58,8 +58,16 @@ impl ModelMetadata {
 				input_size: 504,
 				inverted_depth: true,
 			}),
+			"vda" | "video" => Ok(ModelMetadata {
+				name: "video-depth-anything-small".to_string(),
+				filename: "VideoDepthAnythingSmall.mlpackage".to_string(),
+				url: "https://huggingface.co/mrgnw/video-depth-anything-coreml/resolve/main/VideoDepthAnythingSmall.mlpackage.tar.gz".to_string(),
+				size_mb: 56,
+				input_size: 518,
+				inverted_depth: false,
+			}),
 			other => Err(SpatialError::ConfigError(
-				format!("Unknown encoder size: '{}'. Use 's', 'b', 'l', or 'da3'", other)
+				format!("Unknown encoder size: '{}'. Use 's', 'b', 'l', 'da3', or 'vda'", other)
 			)),
 		}
 	}

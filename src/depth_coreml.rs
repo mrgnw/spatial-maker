@@ -6,6 +6,7 @@ use std::ffi::CString;
 extern "C" {
     fn coreml_load_model(path: *const std::os::raw::c_char) -> *mut std::os::raw::c_void;
     fn coreml_unload_model(model: *mut std::os::raw::c_void);
+    fn coreml_reset_stream(model: *mut std::os::raw::c_void);
     fn coreml_infer_depth(
         model: *mut std::os::raw::c_void,
         rgb_data: *const u8,
@@ -84,6 +85,10 @@ impl CoreMLDepthEstimator {
         }
 
         Ok(output_data)
+    }
+
+    pub fn reset_stream(&self) {
+        unsafe { coreml_reset_stream(self.model) }
     }
 
     pub fn estimate_unnormalized(&self, image: &DynamicImage) -> SpatialResult<Array2<f32>> {
