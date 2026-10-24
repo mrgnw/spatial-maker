@@ -170,8 +170,8 @@ async fn extract_frames(
 				"rawvideo",
 				"-pix_fmt",
 				"rgb24",
-				"-vsync",
-				"0",
+				"-fps_mode",
+				"passthrough",
 				"-",
 			])
 			.stdout(Stdio::piped())
