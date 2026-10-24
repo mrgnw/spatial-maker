@@ -42,7 +42,7 @@ required-features = ["coreml"]
 default = ["coreml", "cli", "jxl"]
 coreml = []
 onnx = ["dep:ort"]
-cli = ["dep:clap", "dep:ratatui", "dep:crossterm"]
+cli = ["dep:clap", "dep:ratatui"]
 
 # Native format decoders (optional - falls back to ffmpeg if not enabled)
 avif = ["image/avif"]
@@ -79,10 +79,6 @@ optional = true
 
 [dependencies.ratatui]
 version = "0.30"
-optional = true
-
-[dependencies.crossterm]
-version = "0.28"
 optional = true
 
 [dev-dependencies]
