@@ -167,7 +167,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
 fn draw_header(frame: &mut Frame, area: Rect, state: &AppState) {
 	let header = Line::from(vec![
 		Span::styled("spatial-maker", Style::default().fg(Color::Cyan).bold()),
-		Span::raw("  depth-anything-v2-"),
+		Span::raw("  "),
 		Span::styled(&state.model_name, Style::default().bold()),
 		Span::styled(
 			format!(" ({} MB)", state.model_mb),

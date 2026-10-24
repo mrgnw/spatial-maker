@@ -33,7 +33,7 @@ struct Cli {
 	#[arg(short, long)]
 	output: Option<PathBuf>,
 
-	/// Model: s (small, 48MB), b (base, 186MB), l (large, 638MB), da3 (v3 mono large, 638MB)
+	/// Model: s (small, 48MB), b (base, 186MB, non-commercial), l (large, 638MB, non-commercial), da3 (v3 mono large, 638MB)
 	#[arg(short, long, default_value = "s")]
 	model: String,
 
@@ -111,16 +111,6 @@ fn generate_output_base(input: &PathBuf, model: &str) -> PathBuf {
 	parent.join(format!("{}-{}", stem, model))
 }
 
-fn model_display_name(encoder_size: &str) -> (&str, u32) {
-	match encoder_size {
-		"s" | "small" => ("small", 48),
-		"b" | "base" => ("base", 186),
-		"l" | "large" => ("large", 638),
-		"da3" | "v3" => ("da3-mono-large", 638),
-		_ => (encoder_size, 0),
-	}
-}
-
 enum TuiEvent {
 	FileStarted(usize),
 	StageUpdate { index: usize, stage: String, progress: f64 },
@@ -170,7 +160,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		normalize_mode,
 	};
 
-	let (model_name, model_mb) = model_display_name(&cli.model);
+	let model_meta = model::ModelMetadata::coreml(&cli.model).unwrap_or_else(|e| {
+		eprintln!("{}", e);
+		std::process::exit(1);
+	});
 
 	let filenames: Vec<(String, MediaType)> = cli
 		.inputs
@@ -182,7 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		})
 		.collect();
 
-	let mut state = AppState::new(filenames, model_name, model_mb);
+	let mut state = AppState::new(filenames, &model_meta.name, model_meta.size_mb);
 	let mut terminal = tui::init_terminal()?;
 
 	let (tx, mut rx) = mpsc::unbounded_channel::<TuiEvent>();
