@@ -11,7 +11,12 @@ build:
 build-release:
 	cargo build --release
 
+# Build with temporary target dir, then clean that target on success
+build-release-clean:
+	../scripts/rust-build-clean . --release
+
 # Build release archives for macOS targets
+# Uses a temporary target dir and removes it after successful packaging.
 dist:
 	#!/bin/bash
 	set -euo pipefail
@@ -20,18 +25,22 @@ dist:
 	targets=(
 		aarch64-apple-darwin
 	)
+	target_base="${DEVCLEAN_RUST_TARGET_BASE:-$HOME/.cache/rust-targets}"
+	target_dir="${target_base}/spatial-maker-dist"
 	echo "building ${bin} {{tag}}"
 	echo
 	rm -rf "${dist}"
 	mkdir -p "${dist}"
+	mkdir -p "${target_base}"
 	for target in "${targets[@]}"; do
 		echo "--- ${target}"
-		cargo build --release --target "${target}"
+		CARGO_TARGET_DIR="${target_dir}" cargo build --release --target "${target}"
 		archive="${bin}-{{tag}}-${target}.tar.gz"
-		tar -czf "${dist}/${archive}" -C "target/${target}/release" "${bin}"
+		tar -czf "${dist}/${archive}" -C "${target_dir}/${target}/release" "${bin}"
 		echo "  -> ${dist}/${archive}"
 		echo
 	done
+	rm -rf "${target_dir}"
 	echo "done"
 	ls -lh "${dist}/"
 
