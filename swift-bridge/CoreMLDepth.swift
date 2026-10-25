@@ -26,7 +26,10 @@ public func loadModel(_ pathPtr: UnsafePointer<CChar>) -> UnsafeMutableRawPointe
 		config.computeUnits = .all
 		
 		let model = try MLModel(contentsOf: modelURL, configuration: config)
-		
+		if modelURL != url {
+			try? FileManager.default.removeItem(at: modelURL)
+		}
+
 		// Return retained pointer to model
 		return Unmanaged.passRetained(model as AnyObject).toOpaque()
 	} catch {
