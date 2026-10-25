@@ -8,8 +8,9 @@ use ndarray::Array2;
 use std::path::Path;
 use std::process::Stdio;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::Command;
+use tokio::process::{ChildStderr, Command};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 #[derive(Clone, Debug)]
 pub struct VideoProgress {
@@ -145,60 +146,109 @@ pub async fn get_video_metadata(input_path: &Path) -> SpatialResult<VideoMetadat
 	})
 }
 
-async fn extract_frames(
-	input_path: &Path,
-	metadata: &VideoMetadata,
-) -> SpatialResult<mpsc::Receiver<Vec<u8>>> {
+const STDERR_TAIL_BYTES: usize = 4096;
+
+fn collect_stderr_tail(mut stderr: ChildStderr) -> JoinHandle<String> {
+	tokio::spawn(async move {
+		let mut tail = Vec::with_capacity(STDERR_TAIL_BYTES * 2);
+		let mut chunk = [0u8; 4096];
+		while let Ok(n) = stderr.read(&mut chunk).await {
+			if n == 0 {
+				break;
+			}
+			tail.extend_from_slice(&chunk[..n]);
+			if tail.len() > STDERR_TAIL_BYTES {
+				tail.drain(..tail.len() - STDERR_TAIL_BYTES);
+			}
+		}
+		String::from_utf8_lossy(&tail).trim().to_string()
+	})
+}
+
+async fn stderr_text(stderr: JoinHandle<String>) -> String {
+	stderr.await.unwrap_or_default()
+}
+
+type FrameReader = (mpsc::Receiver<Vec<u8>>, JoinHandle<SpatialResult<u32>>);
+
+async fn extract_frames(input_path: &Path, metadata: &VideoMetadata) -> SpatialResult<FrameReader> {
 	let (tx, rx) = mpsc::channel::<Vec<u8>>(10);
 
-	let width = metadata.width;
-	let height = metadata.height;
-	let frame_size = (width * height * 3) as usize;
+	let frame_size = (metadata.width * metadata.height * 3) as usize;
+	let vf_scale = format!("scale={}:{}", metadata.width, metadata.height);
+	let input_str = input_path
+		.to_str()
+		.ok_or_else(|| SpatialError::IoError(format!("Invalid input path: {:?}", input_path)))?;
 
-	let input_path = input_path.to_path_buf();
+	let mut child = Command::new("ffmpeg")
+		.args([
+			"-v", "error",
+			"-nostats",
+			"-i", input_str,
+			"-vf", &vf_scale,
+			"-f", "rawvideo",
+			"-pix_fmt", "rgb24",
+			"-fps_mode", "passthrough",
+			"-",
+		])
+		.stdin(Stdio::null())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.map_err(|e| SpatialError::Other(format!("Failed to spawn ffmpeg frame extractor: {}", e)))?;
 
-	let vf_scale = format!("scale={}:{}", width, height);
+	let stdout = child.stdout.take().expect("stdout is piped");
+	let stderr = collect_stderr_tail(child.stderr.take().expect("stderr is piped"));
 
-	tokio::spawn(async move {
-		let mut child = Command::new("ffmpeg")
-			.args([
-				"-i",
-				input_path.to_str().unwrap(),
-				"-vf",
-				&vf_scale,
-				"-f",
-				"rawvideo",
-				"-pix_fmt",
-				"rgb24",
-				"-fps_mode",
-				"passthrough",
-				"-",
-			])
-			.stdout(Stdio::piped())
-			.stderr(Stdio::null())
-			.spawn()
-			.expect("Failed to spawn ffmpeg");
-
-		let stdout = child.stdout.take().expect("Failed to capture stdout");
+	let handle = tokio::spawn(async move {
 		let mut reader = tokio::io::BufReader::new(stdout);
 		let mut frame_buffer = vec![0u8; frame_size];
+		let mut frames = 0u32;
 
 		loop {
 			match reader.read_exact(&mut frame_buffer).await {
 				Ok(_) => {
 					if tx.send(frame_buffer.clone()).await.is_err() {
-						break;
+						let _ = child.kill().await;
+						return Ok(frames);
 					}
+					frames += 1;
 				}
 				Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-				Err(_) => break,
+				Err(e) => {
+					let _ = child.kill().await;
+					return Err(SpatialError::IoError(format!("Failed to read ffmpeg frames: {}", e)));
+				}
 			}
 		}
 
-		let _ = child.wait().await;
+		let status = child
+			.wait()
+			.await
+			.map_err(|e| SpatialError::Other(format!("ffmpeg frame extraction failed: {}", e)))?;
+		if !status.success() {
+			return Err(SpatialError::Other(format!(
+				"ffmpeg frame extraction exited with {}: {}",
+				status,
+				stderr_text(stderr).await
+			)));
+		}
+		if frames == 0 {
+			return Err(SpatialError::Other(format!(
+				"ffmpeg extracted no frames: {}",
+				stderr_text(stderr).await
+			)));
+		}
+		Ok(frames)
 	});
 
-	Ok(rx)
+	Ok((rx, handle))
+}
+
+async fn finish_extraction(handle: JoinHandle<SpatialResult<u32>>) -> SpatialResult<u32> {
+	handle
+		.await
+		.map_err(|e| SpatialError::Other(format!("Frame extraction task failed: {}", e)))?
 }
 
 fn frame_to_image(data: &[u8], width: u32, height: u32) -> SpatialResult<DynamicImage> {
@@ -249,11 +299,13 @@ async fn encode_stereo_video(
 		])
 		.stdin(Stdio::piped())
 		.stdout(Stdio::null())
-		.stderr(Stdio::null())
+		.stderr(Stdio::piped())
 		.spawn()
 		.map_err(|e| SpatialError::Other(format!("Failed to spawn ffmpeg encoder: {}", e)))?;
 
 	let mut stdin = child.stdin.take().expect("Failed to capture stdin");
+	let stderr = collect_stderr_tail(child.stderr.take().expect("stderr is piped"));
+	let mut write_error = None;
 
 	while let Some((left, right)) = rx.recv().await {
 		let mut sbs_image = image::ImageBuffer::new(output_width, output_height);
@@ -274,10 +326,10 @@ async fn encode_stereo_video(
 			}
 		}
 
-		stdin
-			.write_all(&sbs_image.into_raw())
-			.await
-			.map_err(|e| SpatialError::IoError(format!("Failed to write frame: {}", e)))?;
+		if let Err(e) = stdin.write_all(&sbs_image.into_raw()).await {
+			write_error = Some(SpatialError::IoError(format!("Failed to write frame: {}", e)));
+			break;
+		}
 	}
 
 	drop(stdin);
@@ -288,9 +340,14 @@ async fn encode_stereo_video(
 		.map_err(|e| SpatialError::Other(format!("ffmpeg encoding failed: {}", e)))?;
 
 	if !status.success() {
-		return Err(SpatialError::Other(
-			"ffmpeg encoding exited with error".to_string(),
-		));
+		return Err(SpatialError::Other(format!(
+			"ffmpeg encoding exited with {}: {}",
+			status,
+			stderr_text(stderr).await
+		)));
+	}
+	if let Some(e) = write_error {
+		return Err(e);
 	}
 
 	Ok(())
@@ -325,6 +382,8 @@ async fn encode_depth_video(
 		.map_err(|e| SpatialError::Other(format!("Failed to spawn ffmpeg depth encoder: {}", e)))?;
 
 	let mut stdin = child.stdin.take().expect("Failed to capture stdin");
+	let stderr = collect_stderr_tail(child.stderr.take().expect("stderr is piped"));
+	let mut write_error = None;
 
 	while let Some(depth) = rx.recv().await {
 		let mut min_val = f32::INFINITY;
@@ -343,24 +402,28 @@ async fn encode_depth_video(
 			}
 		}).collect();
 
-		stdin
-			.write_all(&pixels)
-			.await
-			.map_err(|e| SpatialError::IoError(format!("Failed to write depth frame: {}", e)))?;
+		if let Err(e) = stdin.write_all(&pixels).await {
+			write_error = Some(SpatialError::IoError(format!("Failed to write depth frame: {}", e)));
+			break;
+		}
 	}
 
 	drop(stdin);
 
-	let output = child
-		.wait_with_output()
+	let status = child
+		.wait()
 		.await
 		.map_err(|e| SpatialError::Other(format!("ffmpeg depth encoding failed: {}", e)))?;
 
-	if !output.status.success() {
-		let stderr = String::from_utf8_lossy(&output.stderr);
+	if !status.success() {
 		return Err(SpatialError::Other(format!(
-			"ffmpeg depth encoding exited with error: {}", stderr
+			"ffmpeg depth encoding exited with {}: {}",
+			status,
+			stderr_text(stderr).await
 		)));
+	}
+	if let Some(e) = write_error {
+		return Err(e);
 	}
 
 	Ok(())
@@ -448,7 +511,7 @@ pub async fn process_video(
 			cb(VideoProgress::new(0, total_frames, "scanning".to_string()));
 		}
 
-		let mut scan_rx = extract_frames(input_path, &metadata).await?;
+		let (mut scan_rx, scan_handle) = extract_frames(input_path, &metadata).await?;
 		let mut scan_count = 0u32;
 		while let Some(frame_data) = scan_rx.recv().await {
 			let frame = frame_to_image(&frame_data, metadata.width, metadata.height)?;
@@ -475,12 +538,14 @@ pub async fn process_video(
 				}
 			}
 		}
+		drop(scan_rx);
+		finish_extraction(scan_handle).await?;
 	}
 
 	#[cfg(all(target_os = "macos", feature = "coreml"))]
 	estimator.reset_stream();
 
-	let mut frame_rx = extract_frames(input_path, &metadata).await?;
+	let (mut frame_rx, frame_handle) = extract_frames(input_path, &metadata).await?;
 
 	let stereo_tx_opt;
 	let stereo_handle;
@@ -575,24 +640,23 @@ pub async fn process_video(
 
 		if let Some(ref depth_tx) = depth_tx_opt {
 			if depth_tx.send(depth_map.clone()).await.is_err() {
-				return Err(SpatialError::Other(
-					"Depth encoder stopped unexpectedly".to_string(),
-				));
+				break;
 			}
 		}
 
 		if let Some(ref stereo_tx) = stereo_tx_opt {
 			let (left, right) = generate_stereo_pair(&frame, &depth_map, config.max_disparity)?;
 			if stereo_tx.send((left, right)).await.is_err() {
-				return Err(SpatialError::Other(
-					"Encoder stopped unexpectedly".to_string(),
-				));
+				break;
 			}
 		}
 	}
 
+	drop(frame_rx);
+	let extraction = finish_extraction(frame_handle).await;
 	drop(stereo_tx_opt);
 	drop(depth_tx_opt);
+	extraction?;
 
 	if let Some(ref cb) = progress_cb {
 		cb(VideoProgress::new(
@@ -614,6 +678,7 @@ pub async fn process_video(
 			.map_err(|e| SpatialError::Other(format!("Depth encoding task failed: {}", e)))??;
 	}
 
+
 	if let Some(ref cb) = progress_cb {
 		cb(VideoProgress::new(
 			total_frames,
@@ -623,4 +688,30 @@ pub async fn process_video(
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[tokio::test]
+	async fn extract_frames_reports_ffmpeg_failure() {
+		let dir = tempfile::tempdir().unwrap();
+		let input = dir.path().join("not-a-video.mp4");
+		std::fs::write(&input, b"not a video").unwrap();
+		let metadata = VideoMetadata {
+			width: 16,
+			height: 16,
+			fps: 30.0,
+			total_frames: 1,
+			duration: 1.0,
+			has_audio: false,
+		};
+
+		let (mut rx, handle) = extract_frames(&input, &metadata).await.unwrap();
+		assert!(rx.recv().await.is_none());
+		let err = finish_extraction(handle).await.unwrap_err().to_string();
+		assert!(err.contains("ffmpeg frame extraction exited"), "{}", err);
+		assert!(err.contains("not-a-video.mp4"), "{}", err);
+	}
 }
