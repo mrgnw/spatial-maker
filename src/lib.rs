@@ -13,6 +13,9 @@ pub mod tui;
 #[cfg(all(target_os = "macos", feature = "coreml"))]
 pub mod depth_coreml;
 
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+pub mod spatial_video;
+
 pub use depth_filter::DepthProcessor;
 pub use error::{SpatialError, SpatialResult};
 pub use image_loader::load_image;
