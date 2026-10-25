@@ -1,11 +1,11 @@
 use clap::{Parser, Subcommand};
 use spatial_maker::{
-	process_video, ImageEncoding, MVHEVCConfig, NormalizeMode, OutputFormat,
+	process_video, ImageEncoding, SpatialPhotoConfig, NormalizeMode, OutputFormat,
 	OutputOptions, OutputType, SpatialConfig, VideoProgress,
 	needs_stereo, parse_output_types,
 	tui::{self, AppState, FileStatus, MediaType},
 	load_image, model, generate_stereo_pair_with_progress,
-	needs_depth, depth_formats, save_depth_map, load_depth_map, save_stereo_image,
+	needs_depth, depth_formats, save_depth_map, load_depth_map, save_stereo_image, spatial_photo_path,
 	CoreMLDepthEstimator,
 };
 use std::path::PathBuf;
@@ -435,20 +435,15 @@ async fn process_file(
 				};
 
 				let has_spatial = output_types.iter().any(|t| matches!(t, OutputType::Spatial));
+				let has_layout = output_types.iter().any(|t| matches!(t, OutputType::SideBySide | OutputType::TopAndBottom | OutputType::Separate));
 
 				let output_options = OutputOptions {
 					layout,
 					image_format: ImageEncoding::Jpeg { quality },
-					mvhevc: if has_spatial {
-						Some(MVHEVCConfig {
-							spatial_cli_path: None,
-							enabled: true,
-							quality,
-							keep_intermediate: output_types.iter().any(|t| matches!(t, OutputType::SideBySide | OutputType::TopAndBottom | OutputType::Separate)),
-						})
-					} else {
-						None
-					},
+					spatial_photo: has_spatial.then_some(SpatialPhotoConfig {
+						quality,
+						keep_layout_image: has_layout,
+					}),
 				};
 
 				let src_ext = input.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
@@ -462,8 +457,17 @@ async fn process_file(
 				let stereo_path = parent.join(format!("{}-spatial.{}", stem, stereo_ext));
 				save_stereo_image(&left, &right, &stereo_path, output_options)?;
 
-				if let Some(name) = stereo_path.file_name().and_then(|s| s.to_str()) {
-					outputs.push(name.to_string());
+				let mut written = Vec::new();
+				if has_layout {
+					written.push(stereo_path.clone());
+				}
+				if has_spatial {
+					written.push(spatial_photo_path(&stereo_path));
+				}
+				for path in written {
+					if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+						outputs.push(name.to_string());
+					}
 				}
 			}
 
