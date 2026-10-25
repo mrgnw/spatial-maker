@@ -3,7 +3,7 @@ use crate::error::{SpatialError, SpatialResult};
 use crate::output::{needs_depth, needs_stereo, OutputType};
 use crate::stereo::generate_stereo_pair;
 use crate::{NormalizeMode, SpatialConfig};
-use image::{DynamicImage, ImageBuffer, RgbImage};
+use image::{DynamicImage, RgbImage};
 use ndarray::Array2;
 use std::path::Path;
 use std::process::Stdio;
@@ -211,6 +211,7 @@ fn frame_to_image(data: &[u8], width: u32, height: u32) -> SpatialResult<Dynamic
 	Ok(DynamicImage::ImageRgb8(rgb_image))
 }
 
+#[cfg(not(all(target_os = "macos", feature = "coreml")))]
 async fn encode_stereo_video(
 	output_path: std::path::PathBuf,
 	metadata: VideoMetadata,
@@ -255,7 +256,7 @@ async fn encode_stereo_video(
 	let mut stdin = child.stdin.take().expect("Failed to capture stdin");
 
 	while let Some((left, right)) = rx.recv().await {
-		let mut sbs_image = ImageBuffer::new(output_width, output_height);
+		let mut sbs_image = image::ImageBuffer::new(output_width, output_height);
 
 		let left_rgb = left.to_rgb8();
 		for y in 0..height {
@@ -365,82 +366,28 @@ async fn encode_depth_video(
 	Ok(())
 }
 
-fn is_spatial_cli_available() -> bool {
-	std::process::Command::new("spatial")
-		.arg("--version")
-		.output()
-		.map(|o| o.status.success())
-		.unwrap_or(false)
-}
-
-async fn encode_mvhevc_video(
-	sbs_path: &Path,
-	output_path: &Path,
-	input_path: &Path,
-	metadata: &VideoMetadata,
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+fn encode_spatial_video(
+	output_path: std::path::PathBuf,
+	input_path: std::path::PathBuf,
+	metadata: VideoMetadata,
+	mut rx: mpsc::Receiver<(DynamicImage, DynamicImage)>,
 ) -> SpatialResult<()> {
-	let sbs_str = sbs_path.to_str()
-		.ok_or_else(|| SpatialError::Other("Invalid SBS path".to_string()))?;
-	let output_str = output_path.to_str()
-		.ok_or_else(|| SpatialError::Other("Invalid output path".to_string()))?;
+	use crate::spatial_video::{SpatialMetadata, SpatialVideoWriter};
 
-	let mut args = vec![
-		"make",
-		"--input", sbs_str,
-		"--output", output_str,
-		"--format", "sbs",
-		"--cdist", "65",
-		"--hfov", "90",
-		"--hadjust", "0",
-		"--projection", "rect",
-		"--overwrite",
-	];
-
-	if !metadata.has_audio {
-		args.push("--no-audio");
+	let audio_source = metadata.has_audio.then_some(input_path.as_path());
+	let mut writer = SpatialVideoWriter::new(
+		&output_path,
+		audio_source,
+		metadata.width,
+		metadata.height,
+		metadata.fps,
+		&SpatialMetadata::default(),
+	)?;
+	while let Some((left, right)) = rx.blocking_recv() {
+		writer.append(&left, &right)?;
 	}
-
-	let output = Command::new("spatial")
-		.args(&args)
-		.output()
-		.await
-		.map_err(|e| SpatialError::Other(format!("Failed to run spatial CLI: {}", e)))?;
-
-	if !output.status.success() {
-		let stderr = String::from_utf8_lossy(&output.stderr);
-		return Err(SpatialError::Other(format!("spatial make failed: {}", stderr)));
-	}
-
-	if metadata.has_audio {
-		let input_str = input_path.to_str()
-			.ok_or_else(|| SpatialError::Other("Invalid input path".to_string()))?;
-
-		let with_audio_path = output_path.with_extension("tmp.mov");
-		let with_audio_str = with_audio_path.to_str()
-			.ok_or_else(|| SpatialError::Other("Invalid temp path".to_string()))?;
-
-		let mux_output = Command::new("ffmpeg")
-			.args([
-				"-i", output_str,
-				"-i", input_str,
-				"-c:v", "copy",
-				"-c:a", "aac",
-				"-map", "0:v:0",
-				"-map", "1:a:0",
-				"-y", with_audio_str,
-			])
-			.output()
-			.await
-			.map_err(|e| SpatialError::Other(format!("Failed to mux audio: {}", e)))?;
-
-		if mux_output.status.success() {
-			let _ = tokio::fs::remove_file(output_path).await;
-			tokio::fs::rename(&with_audio_path, output_path).await
-				.map_err(|e| SpatialError::IoError(format!("Failed to rename muxed file: {}", e)))?;
-		}
-	}
-
-	Ok(())
+	writer.finish()
 }
 
 pub async fn process_video(
@@ -464,27 +411,10 @@ pub async fn process_video(
 	let mut metadata = get_video_metadata(input_path).await?;
 	metadata.width = metadata.width & !1;
 	metadata.height = metadata.height & !1;
-	let use_spatial = do_stereo && is_spatial_cli_available();
-
 	let stereo_output = {
 		let stem = output_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
 		let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
 		parent.join(format!("{}-spatial.mov", stem))
-	};
-
-	let sbs_path = if use_spatial {
-		let temp_dir = std::env::temp_dir();
-		temp_dir.join(format!(
-			"spatial_maker_sbs_{}.mov",
-			std::time::SystemTime::now()
-				.duration_since(std::time::UNIX_EPOCH)
-				.unwrap_or_default()
-				.as_millis()
-		))
-	} else if do_stereo {
-		stereo_output.clone()
-	} else {
-		output_path.to_path_buf()
 	};
 
 	crate::model::ensure_model_exists::<fn(u64, u64)>(&config.encoder_size, None).await?;
@@ -558,11 +488,14 @@ pub async fn process_video(
 	if do_stereo {
 		let (tx, rx) = mpsc::channel::<(DynamicImage, DynamicImage)>(10);
 		stereo_tx_opt = Some(tx);
-		stereo_handle = Some(tokio::spawn(encode_stereo_video(
-			sbs_path.clone(),
-			metadata.clone(),
-			rx,
-		)));
+		#[cfg(all(target_os = "macos", feature = "coreml"))]
+		let handle = {
+			let (output, input, metadata) = (stereo_output.clone(), input_path.to_path_buf(), metadata.clone());
+			tokio::task::spawn_blocking(move || encode_spatial_video(output, input, metadata, rx))
+		};
+		#[cfg(not(all(target_os = "macos", feature = "coreml")))]
+		let handle = tokio::spawn(encode_stereo_video(stereo_output.clone(), metadata.clone(), rx));
+		stereo_handle = Some(handle);
 	} else {
 		stereo_tx_opt = None;
 		stereo_handle = None;
@@ -679,19 +612,6 @@ pub async fn process_video(
 		handle
 			.await
 			.map_err(|e| SpatialError::Other(format!("Depth encoding task failed: {}", e)))??;
-	}
-
-	if use_spatial {
-		if let Some(ref cb) = progress_cb {
-			cb(VideoProgress::new(
-				total_frames,
-				total_frames,
-				"packaging".to_string(),
-			));
-		}
-
-		let result = encode_mvhevc_video(&sbs_path, &stereo_output, input_path, &metadata).await;
-		result?;
 	}
 
 	if let Some(ref cb) = progress_cb {
