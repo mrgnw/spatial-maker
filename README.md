@@ -12,7 +12,7 @@ uv tool install spatial-maker
 
 - macOS with Apple Silicon (for Metal acceleration)
 - [ffmpeg](https://ffmpeg.org/) with VideoToolbox support
-- [spatial CLI](https://blog.mikeswanson.com/spatial_docs/) for MV-HEVC output
+- [spatial CLI](https://blog.mikeswanson.com/spatial_docs/) for spatial photos (spatial video is encoded natively on macOS 14+)
 
 ```bash
 brew install ffmpeg spatial
@@ -95,7 +95,7 @@ Input 2D Video
     |
 [Audio extraction + muxing]
     |
-[MV-HEVC spatial video via spatial CLI]
+[MV-HEVC spatial video via AVFoundation]
     |
 Spatial Video (.mov)
 ```

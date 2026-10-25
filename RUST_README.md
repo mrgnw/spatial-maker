@@ -195,7 +195,7 @@ See [docs.rs/spatial-maker](https://docs.rs/spatial-maker) for full API document
 
 ### For Video:
 - `ffmpeg` in PATH — [https://ffmpeg.org](https://ffmpeg.org)
-- `spatial` CLI for MV-HEVC output — [https://blog.mikeswanson.com/spatial](https://blog.mikeswanson.com/spatial)
+- `spatial` CLI for spatial photos (spatial video is encoded natively on macOS 14+) — [https://blog.mikeswanson.com/spatial](https://blog.mikeswanson.com/spatial)
 
 ```bash
 brew install ffmpeg spatial
