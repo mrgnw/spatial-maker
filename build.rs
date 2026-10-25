@@ -6,6 +6,7 @@ fn main() {
 	{
 		if env::var("CARGO_FEATURE_COREML").is_ok() {
 			println!("cargo:rerun-if-changed=swift-bridge/CoreMLDepth.swift");
+			println!("cargo:rerun-if-changed=swift-bridge/SpatialVideoWriter.swift");
 
 			let out_dir = env::var("OUT_DIR").unwrap();
 			let lib_path = format!("{}/libCoreMLDepth.a", out_dir);
@@ -25,6 +26,7 @@ fn main() {
 				"CoreMLDepth",
 				"-O",
 				"swift-bridge/CoreMLDepth.swift",
+				"swift-bridge/SpatialVideoWriter.swift",
 				"-o",
 				&lib_path,
 			]);
@@ -46,6 +48,9 @@ fn main() {
 			println!("cargo:rustc-link-lib=framework=Foundation");
 			println!("cargo:rustc-link-lib=framework=CoreVideo");
 			println!("cargo:rustc-link-lib=framework=Accelerate");
+			println!("cargo:rustc-link-lib=framework=AVFoundation");
+			println!("cargo:rustc-link-lib=framework=CoreMedia");
+			println!("cargo:rustc-link-lib=framework=VideoToolbox");
 
 			let sdk_path = String::from_utf8(
 				Command::new("xcrun")
