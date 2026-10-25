@@ -10,12 +10,11 @@ uv tool install spatial-maker
 
 ### Requirements
 
-- macOS with Apple Silicon (for Metal acceleration)
+- macOS 14+ with Apple Silicon (Metal acceleration; spatial photos and video are encoded natively)
 - [ffmpeg](https://ffmpeg.org/) with VideoToolbox support
-- [spatial CLI](https://blog.mikeswanson.com/spatial_docs/) for spatial photos (spatial video is encoded natively on macOS 14+)
 
 ```bash
-brew install ffmpeg spatial
+brew install ffmpeg
 ```
 
 ### Model Checkpoints
