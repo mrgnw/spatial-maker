@@ -87,24 +87,12 @@ impl CoreMLDepthEstimator {
     }
 
     pub fn estimate_unnormalized(&self, image: &DynamicImage) -> SpatialResult<Array2<f32>> {
-        let (orig_width, orig_height) = (image.width(), image.height());
-        let output_data = self.infer_raw(image)?;
-
-        let size = self.input_size;
-        let depth_image = ImageBuffer::from_fn(size, size, |x, y| {
-            let idx = (y * size + x) as usize;
-            Luma([output_data[idx]])
-        });
-
-        let resized_depth = image::imageops::resize(
-            &depth_image,
-            orig_width,
-            orig_height,
-            image::imageops::FilterType::Lanczos3,
-        );
-
+        let (resized_depth, min_val, range) = self.infer_resized(image)?;
         let (w, h) = resized_depth.dimensions();
-        let data: Vec<f32> = resized_depth.pixels().map(|p| p[0]).collect();
+        let data: Vec<f32> = resized_depth
+            .pixels()
+            .map(|p| p[0] * range + min_val)
+            .collect();
         Array2::from_shape_vec((h as usize, w as usize), data)
             .map_err(|e| SpatialError::TensorError(format!("Failed to reshape depth: {}", e)))
     }
@@ -113,36 +101,20 @@ impl CoreMLDepthEstimator {
         &self,
         image: &DynamicImage,
     ) -> SpatialResult<ImageBuffer<Luma<f32>, Vec<f32>>> {
-        let (orig_width, orig_height) = (image.width(), image.height());
-        let mut output_data = self.infer_raw(image)?;
+        Ok(self.infer_resized(image)?.0)
+    }
 
-        let min_val = output_data.iter().copied().fold(f32::INFINITY, f32::min);
-        let max_val = output_data
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max);
-        let range = max_val - min_val;
-
-        if range > 1e-6 {
-            for v in &mut output_data {
-                *v = (*v - min_val) / range;
-            }
-        }
-
-        let size = self.input_size;
-        let depth_image = ImageBuffer::from_fn(size, size, |x, y| {
-            let idx = (y * size + x) as usize;
-            Luma([output_data[idx]])
-        });
-
-        let resized_depth = image::imageops::resize(
-            &depth_image,
-            orig_width,
-            orig_height,
-            image::imageops::FilterType::Lanczos3,
-        );
-
-        Ok(resized_depth)
+    fn infer_resized(
+        &self,
+        image: &DynamicImage,
+    ) -> SpatialResult<(ImageBuffer<Luma<f32>, Vec<f32>>, f32, f32)> {
+        let output_data = self.infer_raw(image)?;
+        Ok(resize_normalized(
+            output_data,
+            self.input_size,
+            image.width(),
+            image.height(),
+        ))
     }
 
     pub fn estimate(&self, image: &DynamicImage) -> SpatialResult<Array2<f32>> {
@@ -152,6 +124,59 @@ impl CoreMLDepthEstimator {
         let depth_2d = Array2::from_shape_vec((height as usize, width as usize), data)
             .map_err(|e| SpatialError::TensorError(format!("Failed to reshape depth: {}", e)))?;
         Ok(depth_2d)
+    }
+}
+
+// Resizing Luma<f32> clamps to 0..1, so the model output is scaled into that range first.
+// Returns the resized map plus the (min, range) that undo the scaling.
+fn resize_normalized(
+    mut output_data: Vec<f32>,
+    size: u32,
+    orig_width: u32,
+    orig_height: u32,
+) -> (ImageBuffer<Luma<f32>, Vec<f32>>, f32, f32) {
+    assert_eq!(output_data.len(), (size * size) as usize);
+    let min_val = output_data.iter().copied().fold(f32::INFINITY, f32::min);
+    let max_val = output_data
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    let range = (max_val - min_val).max(1e-6);
+
+    for v in &mut output_data {
+        *v = (*v - min_val) / range;
+    }
+
+    let depth_image = ImageBuffer::from_fn(size, size, |x, y| {
+        let idx = (y * size + x) as usize;
+        Luma([output_data[idx]])
+    });
+
+    let resized_depth = image::imageops::resize(
+        &depth_image,
+        orig_width,
+        orig_height,
+        image::imageops::FilterType::Lanczos3,
+    );
+
+    (resized_depth, min_val, range)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resize_keeps_values_outside_unit_range() {
+        let size = 4;
+        let raw: Vec<f32> = (0..size * size).map(|i| -3.0 + i as f32 * 0.5).collect();
+
+        let (resized, min_val, range) = resize_normalized(raw, size, 8, 8);
+        let restored: Vec<f32> = resized.pixels().map(|p| p[0] * range + min_val).collect();
+
+        let lo = restored.iter().copied().fold(f32::INFINITY, f32::min);
+        let hi = restored.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        assert!(lo < -2.5 && hi > 3.5, "restored range {}..{}", lo, hi);
     }
 }
 
