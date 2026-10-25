@@ -403,20 +403,16 @@ impl ImageEncoding {
 }
 
 #[derive(Clone, Debug)]
-pub struct MVHEVCConfig {
-    pub spatial_cli_path: Option<PathBuf>,
-    pub enabled: bool,
+pub struct SpatialPhotoConfig {
     pub quality: u8,
-    pub keep_intermediate: bool,
+    pub keep_layout_image: bool,
 }
 
-impl Default for MVHEVCConfig {
+impl Default for SpatialPhotoConfig {
     fn default() -> Self {
         Self {
-            spatial_cli_path: None,
-            enabled: false,
             quality: 95,
-            keep_intermediate: false,
+            keep_layout_image: false,
         }
     }
 }
@@ -425,7 +421,7 @@ impl Default for MVHEVCConfig {
 pub struct OutputOptions {
     pub layout: OutputFormat,
     pub image_format: ImageEncoding,
-    pub mvhevc: Option<MVHEVCConfig>,
+    pub spatial_photo: Option<SpatialPhotoConfig>,
 }
 
 impl Default for OutputOptions {
@@ -433,7 +429,7 @@ impl Default for OutputOptions {
         Self {
             layout: OutputFormat::SideBySide,
             image_format: ImageEncoding::Jpeg { quality: 95 },
-            mvhevc: None,
+            spatial_photo: None,
         }
     }
 }
@@ -465,28 +461,60 @@ pub fn save_stereo_image(
         })?;
     }
 
-    match options.layout {
-        OutputFormat::SideBySide => {
-            save_side_by_side(left, right, output_path, options.image_format)?;
-        }
-        OutputFormat::TopAndBottom => {
-            save_top_and_bottom(left, right, output_path, options.image_format)?;
-        }
-        OutputFormat::Separate => {
-            save_separate(left, right, output_path, options.image_format)?;
-        }
-    }
+    let write_layout = options
+        .spatial_photo
+        .as_ref()
+        .map_or(true, |c| c.keep_layout_image);
 
-    if let Some(mvhevc_config) = options.mvhevc {
-        if mvhevc_config.enabled {
-            encode_mvhevc(output_path, &mvhevc_config)?;
-            if !mvhevc_config.keep_intermediate {
-                let _ = std::fs::remove_file(output_path);
+    if write_layout {
+        match options.layout {
+            OutputFormat::SideBySide => {
+                save_side_by_side(left, right, output_path, options.image_format)?;
+            }
+            OutputFormat::TopAndBottom => {
+                save_top_and_bottom(left, right, output_path, options.image_format)?;
+            }
+            OutputFormat::Separate => {
+                save_separate(left, right, output_path, options.image_format)?;
             }
         }
     }
 
+    if let Some(config) = options.spatial_photo {
+        save_spatial_photo(left, right, &spatial_photo_path(output_path), config.quality)?;
+    }
+
     Ok(())
+}
+
+pub fn spatial_photo_path(output_path: &Path) -> PathBuf {
+    output_path.with_extension("heic")
+}
+
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+fn save_spatial_photo(
+    left: &DynamicImage,
+    right: &DynamicImage,
+    path: &Path,
+    quality: u8,
+) -> SpatialResult<()> {
+    use crate::spatial_photo::write_spatial_photo;
+    use crate::spatial_video::SpatialMetadata;
+
+    write_spatial_photo(path, left, right, quality, &SpatialMetadata::default())
+}
+
+#[cfg(not(all(target_os = "macos", feature = "coreml")))]
+fn save_spatial_photo(
+    _left: &DynamicImage,
+    _right: &DynamicImage,
+    path: &Path,
+    _quality: u8,
+) -> SpatialResult<()> {
+    Err(SpatialError::ConfigError(format!(
+        "Spatial photos need macOS with the 'coreml' feature: {}",
+        path.display()
+    )))
 }
 
 fn save_side_by_side(
@@ -577,55 +605,6 @@ fn save_image(image: &DynamicImage, path: &Path, encoding: ImageEncoding) -> Spa
                 .save(path)
                 .map_err(|e| SpatialError::ImageError(format!("Failed to save PNG: {}", e)))?;
         }
-    }
-
-    Ok(())
-}
-
-pub fn encode_mvhevc(stereo_path: &Path, config: &MVHEVCConfig) -> SpatialResult<()> {
-    let spatial_path = config
-        .spatial_cli_path
-        .as_ref()
-        .map(|p| p.as_path())
-        .unwrap_or_else(|| Path::new("spatial"));
-
-    let hevc_path = stereo_path.with_extension("heic");
-
-    let format = if stereo_path.to_string_lossy().contains("top-bottom")
-        || stereo_path.to_string_lossy().contains("_tb_")
-    {
-        "hou"
-    } else {
-        "sbs"
-    };
-
-    let quality_normalized = (config.quality as f32 / 100.0).clamp(0.0, 1.0);
-
-    let mut cmd = Command::new(spatial_path);
-    cmd.arg("make")
-        .arg("--input")
-        .arg(stereo_path)
-        .arg("--output")
-        .arg(&hevc_path)
-        .arg("--format")
-        .arg(format)
-        .arg("--quality")
-        .arg(quality_normalized.to_string())
-        .arg("--overwrite");
-
-    let output = cmd.output().map_err(|e| {
-        SpatialError::ImageError(format!(
-            "Failed to run `spatial` CLI: {}. Ensure the `spatial` tool is installed and in PATH.",
-            e
-        ))
-    })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(SpatialError::ImageError(format!(
-            "MV-HEVC encoding failed: {}",
-            stderr
-        )));
     }
 
     Ok(())

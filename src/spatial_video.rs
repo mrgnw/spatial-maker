@@ -118,7 +118,7 @@ impl Drop for SpatialVideoWriter {
 
 unsafe impl Send for SpatialVideoWriter {}
 
-fn path_to_cstring(path: &Path) -> SpatialResult<CString> {
+pub(crate) fn path_to_cstring(path: &Path) -> SpatialResult<CString> {
     let s = path
         .to_str()
         .ok_or_else(|| SpatialError::Other(format!("Invalid path encoding: {}", path.display())))?;

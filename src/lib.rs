@@ -16,13 +16,16 @@ pub mod depth_coreml;
 #[cfg(all(target_os = "macos", feature = "coreml"))]
 pub mod spatial_video;
 
+#[cfg(all(target_os = "macos", feature = "coreml"))]
+pub mod spatial_photo;
+
 pub use depth_filter::DepthProcessor;
 pub use error::{SpatialError, SpatialResult};
 pub use image_loader::load_image;
 pub use model::{find_model, get_checkpoint_dir, model_exists};
 pub use output::{
-	create_sbs_image, save_stereo_image,
-	DepthFormat, ImageEncoding, MVHEVCConfig, OutputFormat, OutputOptions, OutputType,
+	create_sbs_image, save_stereo_image, spatial_photo_path,
+	DepthFormat, ImageEncoding, SpatialPhotoConfig, OutputFormat, OutputOptions, OutputType,
 	depth_formats, load_depth_map, needs_depth, needs_stereo, parse_output_types, save_depth_map, stereo_types,
 };
 pub use stereo::{generate_stereo_pair, generate_stereo_pair_with_progress};
@@ -212,8 +215,14 @@ pub async fn process_photo(
 			other => other,
 		};
 		let stereo_path = parent.join(format!("{}-spatial.{}", stem, stereo_ext));
+		let spatial_photo = output_options.spatial_photo.clone();
 		save_stereo_image(&left, &right, &stereo_path, output_options)?;
-		result.stereo_paths.push(stereo_path);
+		if spatial_photo.as_ref().map_or(true, |c| c.keep_layout_image) {
+			result.stereo_paths.push(stereo_path.clone());
+		}
+		if spatial_photo.is_some() {
+			result.stereo_paths.push(spatial_photo_path(&stereo_path));
+		}
 	}
 
 	Ok(result)
