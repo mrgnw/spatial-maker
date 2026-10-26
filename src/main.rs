@@ -34,9 +34,9 @@ struct Cli {
 	output: Option<PathBuf>,
 
 	/// Model: s (small, 48MB), b (base, 186MB, non-commercial), l (large, 638MB, non-commercial), da3 (v3 mono large, 638MB),
-	/// vda (video depth anything small, temporally stable, 56MB)
-	#[arg(short, long, default_value = "s")]
-	model: String,
+	/// vda (video depth anything small, temporally stable, 56MB). Default: da3 for photos, s for videos
+	#[arg(short, long)]
+	model: Option<String>,
 
 	/// Maximum disparity in pixels (higher = more 3D depth)
 	#[arg(long, default_value = "30")]
@@ -110,6 +110,17 @@ fn detect_media_type(path: &PathBuf) -> MediaType {
 	}
 }
 
+const DEFAULT_PHOTO_MODEL: &str = "da3";
+const DEFAULT_VIDEO_MODEL: &str = "s";
+
+fn model_for(requested: &Option<String>, media_type: &MediaType) -> String {
+	match (requested, media_type) {
+		(Some(model), _) => model.clone(),
+		(None, MediaType::Photo) => DEFAULT_PHOTO_MODEL.to_string(),
+		(None, MediaType::Video) => DEFAULT_VIDEO_MODEL.to_string(),
+	}
+}
+
 fn generate_output_base(input: &PathBuf, model: &str) -> PathBuf {
 	let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
 	let parent = input.parent().unwrap_or_else(|| std::path::Path::new("."));
@@ -154,8 +165,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		std::process::exit(1);
 	});
 
+	let first_media_type = cli.inputs.first().map(detect_media_type).unwrap_or(MediaType::Photo);
+	let header_model = model_for(&cli.model, &first_media_type);
+
 	let config = SpatialConfig {
-		encoder_size: cli.model.clone(),
+		encoder_size: header_model.clone(),
 		max_disparity: cli.max_disparity,
 		target_depth_size: 518,
 		temporal_alpha: cli.temporal_alpha,
@@ -165,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		normalize_mode,
 	};
 
-	let model_meta = model::ModelMetadata::coreml(&cli.model).unwrap_or_else(|e| {
+	let model_meta = model::ModelMetadata::coreml(&header_model).unwrap_or_else(|e| {
 		eprintln!("{}", e);
 		std::process::exit(1);
 	});
@@ -187,7 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	let inputs_owned: Vec<PathBuf> = cli.inputs.clone();
 	let output_opt = cli.output.clone();
-	let model_str = cli.model.clone();
+	let requested_model = cli.model.clone();
 	let quality = cli.quality;
 	let heic_quality = cli.heic_quality;
 	let force = cli.force;
@@ -198,9 +212,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		for (i, input) in inputs_owned.iter().enumerate() {
 			let _ = tx.send(TuiEvent::FileStarted(i));
 
+			let model = model_for(&requested_model, &detect_media_type(input));
 			let output = output_opt
 				.clone()
-				.unwrap_or_else(|| generate_output_base(input, &model_str));
+				.unwrap_or_else(|| generate_output_base(input, &model));
 
 			let file_start = Instant::now();
 
@@ -209,7 +224,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 				i,
 				input,
 				output,
-				config_owned.clone(),
+				SpatialConfig {
+					encoder_size: model,
+					..config_owned.clone()
+				},
 				&output_types_owned,
 				quality,
 				heic_quality,
