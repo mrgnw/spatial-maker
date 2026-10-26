@@ -246,23 +246,10 @@ pub fn save_depth_png16(depth: &Array2<f32>, path: &Path) -> SpatialResult<()> {
         })
         .collect();
 
-    let file = std::fs::File::create(path)
-        .map_err(|e| SpatialError::ImageError(format!("Failed to create output file: {}", e)))?;
-    let writer = std::io::BufWriter::new(file);
-
-    let encoder = image::codecs::png::PngEncoder::new(writer);
-    use image::ImageEncoder;
-
-    let byte_data: Vec<u8> = pixels.iter().flat_map(|&v| v.to_be_bytes()).collect();
-
-    encoder
-        .write_image(
-            &byte_data,
-            w as u32,
-            h as u32,
-            image::ExtendedColorType::L16,
-        )
-        .map_err(|e| SpatialError::ImageError(format!("Failed to encode 16-bit PNG: {}", e)))?;
+    image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(w as u32, h as u32, pixels)
+		.expect("depth pixels match their dimensions")
+		.save(path)
+		.map_err(|e| SpatialError::ImageError(format!("Failed to encode 16-bit PNG: {}", e)))?;
 
     Ok(())
 }
@@ -610,4 +597,25 @@ fn save_image(image: &DynamicImage, path: &Path, encoding: ImageEncoding) -> Spa
     }
 
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn png16_depth_round_trips() {
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("depth.png");
+		let depth = Array2::from_shape_fn((8, 16), |(y, x)| (y * 16 + x) as f32 / 127.0);
+
+		save_depth_png16(&depth, &path).unwrap();
+		let loaded = load_depth_map(&path).unwrap();
+
+		let worst = depth
+			.iter()
+			.zip(loaded.iter())
+			.map(|(a, b)| (a - b).abs())
+			.fold(0.0f32, f32::max);
+		assert!(worst < 1e-4, "worst round-trip error {}", worst);
+	}
 }
