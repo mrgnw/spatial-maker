@@ -1,8 +1,10 @@
-use crate::error::SpatialResult;
-use image::{DynamicImage, ImageBuffer, Rgb};
+use crate::depth_refine::{refine_depth_edges, DEFAULT_EPSILON, DEFAULT_RADIUS_FRACTION};
+use crate::error::{SpatialError, SpatialResult};
+use image::{DynamicImage, ImageBuffer, Luma, Rgb};
 use ndarray::Array2;
 use rayon::prelude::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
+
+const HOLE: f32 = f32::NEG_INFINITY;
 
 pub fn generate_stereo_pair(
     image: &DynamicImage,
@@ -21,149 +23,216 @@ pub fn generate_stereo_pair_with_progress<F>(
 where
     F: FnMut(f64),
 {
-    let img_rgb = image.to_rgb8();
-    let width = img_rgb.width() as usize;
-    let height = img_rgb.height() as usize;
-
-    let mut right_rgb: ImageBuffer<Rgb<u8>, Vec<u8>> =
-        ImageBuffer::new(width as u32, height as u32);
-    let mut depth_buffer = vec![f32::NEG_INFINITY; width * height];
-    let mut filled = vec![false; width * height];
-
-    for y in 0..height {
-        for x in 0..width {
-            let depth_val = get_depth_at(depth, x, y, width, height);
-            let disparity = (depth_val * max_disparity as f32).round() as i32;
-            let x_right = x as i32 - disparity;
-
-            if x_right >= 0 && x_right < width as i32 {
-                let idx = y * width + x_right as usize;
-                if depth_val > depth_buffer[idx] {
-                    depth_buffer[idx] = depth_val;
-                    filled[idx] = true;
-                    if let Some(pixel) = img_rgb.get_pixel_checked(x as u32, y as u32) {
-                        right_rgb.put_pixel(x_right as u32, y as u32, *pixel);
-                    }
-                }
-            }
-        }
-
-        if let Some(ref mut cb) = progress_callback {
-            let warp_progress = (y as f64 / height as f64) * 50.0;
-            cb(warp_progress);
-        }
-    }
-
+    let pair = generate_stereo_pair_with_refinement(
+        image,
+        depth,
+        max_disparity,
+        Some(EdgeRefinement::default()),
+    )?;
     if let Some(ref mut cb) = progress_callback {
-        fill_disocclusions_with_progress(&mut right_rgb, &filled, width, height, Some(cb));
-    } else {
-        fill_disocclusions(&mut right_rgb, &filled, width, height);
+        cb(100.0);
     }
-
-    let left_image = image.clone();
-    let right_image = DynamicImage::ImageRgb8(right_rgb);
-
-    Ok((left_image, right_image))
+    Ok(pair)
 }
 
-fn get_depth_at(
-    depth: &Array2<f32>,
-    x: usize,
-    y: usize,
-    img_width: usize,
-    img_height: usize,
-) -> f32 {
-    let (depth_height, depth_width) = depth.dim();
+#[derive(Clone, Copy, Debug)]
+pub struct EdgeRefinement {
+    pub radius_fraction: f32,
+    pub epsilon: f32,
+}
 
-    if depth_height == img_height && depth_width == img_width {
-        depth[[y, x]]
-    } else {
-        let scaled_x = (x as f32 * depth_width as f32 / img_width as f32)
-            .min(depth_width as f32 - 1.0) as usize;
-        let scaled_y = (y as f32 * depth_height as f32 / img_height as f32)
-            .min(depth_height as f32 - 1.0) as usize;
-
-        if scaled_y < depth_height && scaled_x < depth_width {
-            depth[[scaled_y, scaled_x]]
-        } else {
-            0.5
+impl Default for EdgeRefinement {
+    fn default() -> Self {
+        Self {
+            radius_fraction: DEFAULT_RADIUS_FRACTION,
+            epsilon: DEFAULT_EPSILON,
         }
     }
 }
 
-fn fill_disocclusions(
-    image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
-    filled: &[bool],
-    width: usize,
-    height: usize,
-) {
-    fill_disocclusions_with_progress(image, filled, width, height, None::<fn(f64)>);
-}
+pub fn generate_stereo_pair_with_refinement(
+    image: &DynamicImage,
+    depth: &Array2<f32>,
+    max_disparity: u32,
+    refinement: Option<EdgeRefinement>,
+) -> SpatialResult<(DynamicImage, DynamicImage)> {
+    let src = image.to_rgb8();
+    let (width, height) = (src.width() as usize, src.height() as usize);
+    if width == 0 || height == 0 {
+        return Err(SpatialError::ImageError(
+            "Cannot make a stereo pair from an empty image".into(),
+        ));
+    }
 
-fn fill_disocclusions_with_progress<F>(
-    image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
-    filled: &[bool],
-    width: usize,
-    height: usize,
-    mut progress_callback: Option<F>,
-) where
-    F: FnMut(f64),
-{
-    let original = image.clone();
-    let original_raw = original.as_raw();
-    let bytes_per_row = width * 3;
+    let depth = depth_at_image_size(depth, width, height);
+    let depth = match refinement {
+        Some(r) => refine_depth_edges(&src, &depth, r.radius_fraction, r.epsilon),
+        None => depth,
+    };
+    let mut right = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(width as u32, height as u32);
+    let row_bytes = width * 3;
 
-    let counter = AtomicUsize::new(0);
-
-    let output_raw = image.as_mut();
-    output_raw
-        .par_chunks_mut(bytes_per_row)
-        .enumerate()
-        .for_each(|(y, row_pixels)| {
-            let row_filled = &filled[y * width..(y + 1) * width];
-            let orig_row = &original_raw[y * bytes_per_row..(y + 1) * bytes_per_row];
-
-            for x in 0..width {
-                if row_filled[x] {
-                    continue;
-                }
-
-                let mut left_pixel = None;
-                for lx in (0..x).rev() {
-                    if row_filled[lx] {
-                        let off = lx * 3;
-                        left_pixel = Some([orig_row[off], orig_row[off + 1], orig_row[off + 2]]);
-                        break;
-                    }
-                }
-
-                let mut right_pixel = None;
-                for rx in (x + 1)..width {
-                    if row_filled[rx] {
-                        let off = rx * 3;
-                        right_pixel = Some([orig_row[off], orig_row[off + 1], orig_row[off + 2]]);
-                        break;
-                    }
-                }
-
-                let fill = match (left_pixel, right_pixel) {
-                    (Some(l), Some(_)) => l,
-                    (Some(l), None) => l,
-                    (None, Some(r)) => r,
-                    (None, None) => continue,
-                };
-                let off = x * 3;
-                row_pixels[off] = fill[0];
-                row_pixels[off + 1] = fill[1];
-                row_pixels[off + 2] = fill[2];
-            }
-
-            counter.fetch_add(1, Ordering::Relaxed);
+    right
+        .as_mut()
+        .par_chunks_mut(row_bytes)
+        .zip(src.as_raw().par_chunks(row_bytes))
+        .zip(depth.par_chunks(width))
+        .for_each(|((out_row, src_row), depth_row)| {
+            render_right_row(src_row, depth_row, max_disparity as f32, out_row);
         });
 
-    if let Some(ref mut cb) = progress_callback {
-        let done = counter.load(Ordering::Relaxed);
-        let fill_progress = 50.0 + (done as f64 / height as f64) * 50.0;
-        cb(fill_progress);
+    Ok((image.clone(), DynamicImage::ImageRgb8(right)))
+}
+
+fn depth_at_image_size(depth: &Array2<f32>, width: usize, height: usize) -> Vec<f32> {
+    let (depth_height, depth_width) = depth.dim();
+    let values: Vec<f32> = depth.iter().copied().collect();
+    if depth_width == width && depth_height == height {
+        return values;
+    }
+    let buffer = ImageBuffer::<Luma<f32>, Vec<f32>>::from_raw(
+        depth_width as u32,
+        depth_height as u32,
+        values,
+    )
+    .expect("depth buffer matches its dimensions");
+    image::imageops::resize(
+        &buffer,
+        width as u32,
+        height as u32,
+        image::imageops::FilterType::Triangle,
+    )
+    .into_raw()
+}
+
+// Right eye from the left eye. Near pixels (depth 1) shift left by up to max_disparity, so the
+// background they uncover sits to their right.
+fn render_right_row(src: &[u8], depth: &[f32], max_disparity: f32, out: &mut [u8]) {
+    let width = depth.len();
+    assert_eq!(src.len(), width * 3);
+    assert_eq!(out.len(), width * 3);
+
+    let target_disparity = warp_disparity(depth, max_disparity);
+
+    let mut x = 0;
+    while x < width {
+        if target_disparity[x] != HOLE {
+            let pixel = sample_bilinear(src, x as f32 + target_disparity[x]);
+            out[x * 3..x * 3 + 3].copy_from_slice(&pixel);
+            x += 1;
+            continue;
+        }
+        let hole_end = (x..width)
+            .find(|&i| target_disparity[i] != HOLE)
+            .unwrap_or(width);
+        fill_hole(src, &target_disparity, x, hole_end, out);
+        x = hole_end;
+    }
+}
+
+// Forward-warp each source pixel's disparity to its right-eye position, keeping the nearest.
+// Splatting onto both neighbouring columns closes the 1 px cracks left by stretched surfaces.
+fn warp_disparity(depth: &[f32], max_disparity: f32) -> Vec<f32> {
+    let width = depth.len();
+    let mut target = vec![HOLE; width];
+    for (x, &d) in depth.iter().enumerate() {
+        let disparity = d.clamp(0.0, 1.0) * max_disparity;
+        let base = (x as f32 - disparity).floor() as i64;
+        for t in [base, base + 1] {
+            if t >= 0 && (t as usize) < width && disparity > target[t as usize] {
+                target[t as usize] = disparity;
+            }
+        }
+    }
+    target
+}
+
+// Holes are background the left eye never saw. Mirror the background texture next to the hole
+// into it instead of repeating the foreground edge.
+fn fill_hole(src: &[u8], target_disparity: &[f32], start: usize, end: usize, out: &mut [u8]) {
+    let width = target_disparity.len();
+    let left = start.checked_sub(1);
+    let right = (end < width).then_some(end);
+    let background = match (left, right) {
+        (Some(l), Some(r)) if target_disparity[l] < target_disparity[r] => l,
+        (_, Some(r)) => r,
+        (Some(l), None) => l,
+        (None, None) => return,
+    };
+    let anchor = background as f32 + target_disparity[background];
+    for x in start..end {
+        let distance = (x as f32 - background as f32).abs();
+        let source_x = if background >= end {
+            anchor + distance
+        } else {
+            anchor - distance
+        };
+        let pixel = sample_bilinear(src, source_x);
+        out[x * 3..x * 3 + 3].copy_from_slice(&pixel);
+    }
+}
+
+fn sample_bilinear(row: &[u8], x: f32) -> [u8; 3] {
+    let width = row.len() / 3;
+    let x = x.clamp(0.0, (width - 1) as f32);
+    let x0 = x.floor() as usize;
+    let x1 = (x0 + 1).min(width - 1);
+    let t = x - x0 as f32;
+    let mut pixel = [0u8; 3];
+    for c in 0..3 {
+        let a = row[x0 * 3 + c] as f32;
+        let b = row[x1 * 3 + c] as f32;
+        pixel[c] = (a + (b - a) * t).round() as u8;
+    }
+    pixel
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FOREGROUND: [u8; 3] = [250, 20, 20];
+    const BACKGROUND: [u8; 3] = [20, 20, 250];
+
+    fn block_scene(width: usize) -> (Vec<u8>, Vec<f32>) {
+        let mut src = Vec::with_capacity(width * 3);
+        let mut depth = Vec::with_capacity(width);
+        for x in 0..width {
+            let near = (40..60).contains(&x);
+            src.extend_from_slice(if near { &FOREGROUND } else { &BACKGROUND });
+            depth.push(if near { 1.0 } else { 0.0 });
+        }
+        (src, depth)
+    }
+
+    #[test]
+    fn flat_depth_leaves_row_unchanged() {
+        let (src, _) = block_scene(100);
+        let mut out = vec![0u8; src.len()];
+        render_right_row(&src, &vec![0.0; 100], 10.0, &mut out);
+        assert_eq!(out, src);
+    }
+
+    #[test]
+    fn uncovered_background_is_not_filled_with_foreground() {
+        let (src, depth) = block_scene(100);
+        let mut out = vec![0u8; src.len()];
+        render_right_row(&src, &depth, 10.0, &mut out);
+
+        let pixel = |x: usize| [out[x * 3], out[x * 3 + 1], out[x * 3 + 2]];
+        assert_eq!(pixel(35), FOREGROUND);
+        assert_eq!(pixel(45), FOREGROUND);
+        for x in 52..60 {
+            assert_eq!(pixel(x), BACKGROUND, "column {} should show background", x);
+        }
+    }
+
+    #[test]
+    fn pair_keeps_image_size() {
+        let image = DynamicImage::new_rgb8(64, 32);
+        let depth = Array2::<f32>::from_elem((16, 32), 0.5);
+        let (left, right) = generate_stereo_pair(&image, &depth, 8).unwrap();
+        assert_eq!((left.width(), left.height()), (64, 32));
+        assert_eq!((right.width(), right.height()), (64, 32));
     }
 }
