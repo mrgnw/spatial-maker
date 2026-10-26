@@ -46,6 +46,8 @@ You only need the model sizes you plan to use. `vits` (small) is a good default.
 | Depth Anything V2 Large | 335.3M | CC BY-NC 4.0 (non-commercial) |
 | Depth Anything 3 Mono Large | 0.35B | Apache-2.0 |
 
+The CLI downloads CoreML models on first use. Photos default to Depth Anything 3 Mono Large (`-m da3`) for cleaner edges on thin detail; videos default to V2 Small (`-m s`) for speed.
+
 spatial-maker is MIT-licensed, but the Base and Large V2 weights are not: don't use them for commercial work.
 
 ## Usage
