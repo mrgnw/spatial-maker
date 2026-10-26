@@ -25,7 +25,7 @@ pub use image_loader::load_image;
 pub use model::{find_model, get_checkpoint_dir, model_exists};
 pub use output::{
 	create_sbs_image, save_stereo_image, spatial_photo_path,
-	DepthFormat, ImageEncoding, SpatialPhotoConfig, OutputFormat, OutputOptions, OutputType,
+	DepthFormat, ImageEncoding, SpatialPhotoConfig, DEFAULT_HEIC_QUALITY, OutputFormat, OutputOptions, OutputType,
 	depth_formats, load_depth_map, needs_depth, needs_stereo, parse_output_types, save_depth_map, stereo_types,
 };
 pub use stereo::{generate_stereo_pair, generate_stereo_pair_with_progress};

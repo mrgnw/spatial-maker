@@ -402,6 +402,8 @@ impl ImageEncoding {
     }
 }
 
+pub const DEFAULT_HEIC_QUALITY: u8 = 70;
+
 #[derive(Clone, Debug)]
 pub struct SpatialPhotoConfig {
     pub quality: u8,
@@ -411,7 +413,7 @@ pub struct SpatialPhotoConfig {
 impl Default for SpatialPhotoConfig {
     fn default() -> Self {
         Self {
-            quality: 95,
+            quality: DEFAULT_HEIC_QUALITY,
             keep_layout_image: false,
         }
     }
