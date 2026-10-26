@@ -1,5 +1,6 @@
 pub mod depth;
 pub mod depth_filter;
+pub mod depth_refine;
 pub mod error;
 pub mod image_loader;
 pub mod model;
