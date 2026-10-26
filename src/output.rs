@@ -402,7 +402,7 @@ impl ImageEncoding {
     }
 }
 
-pub const DEFAULT_HEIC_QUALITY: u8 = 70;
+pub const DEFAULT_HEIC_QUALITY: u8 = 80;
 
 #[derive(Clone, Debug)]
 pub struct SpatialPhotoConfig {
