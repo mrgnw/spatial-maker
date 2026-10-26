@@ -247,9 +247,9 @@ pub fn save_depth_png16(depth: &Array2<f32>, path: &Path) -> SpatialResult<()> {
         .collect();
 
     image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(w as u32, h as u32, pixels)
-		.expect("depth pixels match their dimensions")
-		.save(path)
-		.map_err(|e| SpatialError::ImageError(format!("Failed to encode 16-bit PNG: {}", e)))?;
+        .expect("depth pixels match their dimensions")
+        .save(path)
+        .map_err(|e| SpatialError::ImageError(format!("Failed to encode 16-bit PNG: {}", e)))?;
 
     Ok(())
 }
@@ -600,22 +600,22 @@ fn save_image(image: &DynamicImage, path: &Path, encoding: ImageEncoding) -> Spa
 }
 #[cfg(test)]
 mod tests {
-	use super::*;
+    use super::*;
 
-	#[test]
-	fn png16_depth_round_trips() {
-		let dir = tempfile::tempdir().unwrap();
-		let path = dir.path().join("depth.png");
-		let depth = Array2::from_shape_fn((8, 16), |(y, x)| (y * 16 + x) as f32 / 127.0);
+    #[test]
+    fn png16_depth_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("depth.png");
+        let depth = Array2::from_shape_fn((8, 16), |(y, x)| (y * 16 + x) as f32 / 127.0);
 
-		save_depth_png16(&depth, &path).unwrap();
-		let loaded = load_depth_map(&path).unwrap();
+        save_depth_png16(&depth, &path).unwrap();
+        let loaded = load_depth_map(&path).unwrap();
 
-		let worst = depth
-			.iter()
-			.zip(loaded.iter())
-			.map(|(a, b)| (a - b).abs())
-			.fold(0.0f32, f32::max);
-		assert!(worst < 1e-4, "worst round-trip error {}", worst);
-	}
+        let worst = depth
+            .iter()
+            .zip(loaded.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(worst < 1e-4, "worst round-trip error {}", worst);
+    }
 }
