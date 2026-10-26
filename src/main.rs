@@ -47,8 +47,12 @@ struct Cli {
 	output_types: String,
 
 	/// JPEG quality for photos (1-100)
-	#[arg(long, default_value = "95")]
+	#[arg(long, default_value = "95", value_parser = clap::value_parser!(u8).range(1..=100))]
 	quality: u8,
+
+	/// HEIC quality for spatial photos (1-100)
+	#[arg(long, default_value_t = spatial_maker::DEFAULT_HEIC_QUALITY, value_parser = clap::value_parser!(u8).range(1..=100))]
+	heic_quality: u8,
 
 	/// Temporal EMA blend factor for video depth (0=off, 1=no smoothing, default 0.7)
 	#[arg(long, default_value = "0.7")]
@@ -185,6 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let output_opt = cli.output.clone();
 	let model_str = cli.model.clone();
 	let quality = cli.quality;
+	let heic_quality = cli.heic_quality;
 	let force = cli.force;
 	let output_types_owned = output_types.clone();
 	let config_owned = config.clone();
@@ -207,6 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 				config_owned.clone(),
 				&output_types_owned,
 				quality,
+				heic_quality,
 				force,
 			)
 			.await;
@@ -297,6 +303,7 @@ async fn process_file(
 	config: SpatialConfig,
 	output_types: &[OutputType],
 	quality: u8,
+	heic_quality: u8,
 	force: bool,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
 	let media_type = detect_media_type(input);
@@ -441,7 +448,7 @@ async fn process_file(
 					layout,
 					image_format: ImageEncoding::Jpeg { quality },
 					spatial_photo: has_spatial.then_some(SpatialPhotoConfig {
-						quality,
+						quality: heic_quality,
 						keep_layout_image: has_layout,
 					}),
 				};
