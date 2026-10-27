@@ -5,6 +5,8 @@ use ndarray::Array2;
 use rayon::prelude::*;
 
 const HOLE: f32 = f32::NEG_INFINITY;
+const SUPERSAMPLE: usize = 4;
+const TEAR_DISPARITY: f32 = 1.0;
 
 pub fn generate_stereo_pair(
     image: &DynamicImage,
@@ -107,82 +109,123 @@ fn depth_at_image_size(depth: &Array2<f32>, width: usize, height: usize) -> Vec<
 
 // Right eye from the left eye. Near pixels (depth 1) shift left by up to max_disparity, so the
 // background they uncover sits to their right.
+//
+// The row is rendered at SUPERSAMPLE x horizontal resolution and averaged back down, so a
+// silhouette that lands between pixels gives that pixel partial coverage instead of a whole-pixel
+// step. That is what removes the staircase along slanted edges.
 fn render_right_row(src: &[u8], depth: &[f32], max_disparity: f32, out: &mut [u8]) {
     let width = depth.len();
     assert_eq!(src.len(), width * 3);
     assert_eq!(out.len(), width * 3);
 
-    let target_disparity = warp_disparity(depth, max_disparity);
+    let (disparity, source_x) = rasterize_row(depth, max_disparity);
+    let colors = shade_row(src, &disparity, &source_x);
 
-    let mut x = 0;
-    while x < width {
-        if target_disparity[x] != HOLE {
-            let pixel = sample_bilinear(src, x as f32 + target_disparity[x]);
-            out[x * 3..x * 3 + 3].copy_from_slice(&pixel);
-            x += 1;
-            continue;
+    for (x, pixel) in out.chunks_exact_mut(3).enumerate() {
+        let samples = &colors[x * SUPERSAMPLE..(x + 1) * SUPERSAMPLE];
+        for c in 0..3 {
+            let sum: f32 = samples.iter().map(|s| s[c]).sum();
+            pixel[c] = (sum / SUPERSAMPLE as f32).round() as u8;
         }
-        let hole_end = (x..width)
-            .find(|&i| target_disparity[i] != HOLE)
-            .unwrap_or(width);
-        fill_hole(src, &target_disparity, x, hole_end, out);
-        x = hole_end;
     }
 }
 
-// Forward-warp each source pixel's disparity to its right-eye position, keeping the nearest.
-// Splatting onto both neighbouring columns closes the 1 px cracks left by stretched surfaces.
-fn warp_disparity(depth: &[f32], max_disparity: f32) -> Vec<f32> {
+// Each source pixel covers one pixel of width around its shifted centre. When its right
+// neighbour is on the same surface (disparity within TEAR_DISPARITY), the footprint stretches to
+// meet it so slopes don't crack; across a larger jump it tears and leaves a hole. Overlaps keep
+// the nearest surface.
+fn rasterize_row(depth: &[f32], max_disparity: f32) -> (Vec<f32>, Vec<f32>) {
     let width = depth.len();
-    let mut target = vec![HOLE; width];
-    for (x, &d) in depth.iter().enumerate() {
-        let disparity = d.clamp(0.0, 1.0) * max_disparity;
-        let base = (x as f32 - disparity).floor() as i64;
-        for t in [base, base + 1] {
-            if t >= 0 && (t as usize) < width && disparity > target[t as usize] {
-                target[t as usize] = disparity;
+    let samples = width * SUPERSAMPLE;
+    let scale = SUPERSAMPLE as f32;
+    let mut disparity = vec![HOLE; samples];
+    let mut source_x = vec![0.0f32; samples];
+
+    let disparity_at = |x: usize| depth[x].clamp(0.0, 1.0) * max_disparity;
+    for x in 0..width {
+        let d = disparity_at(x);
+        let centre = (x as f32 + 0.5 - d) * scale;
+        let start = centre - scale * 0.5;
+        let mut end = centre + scale * 0.5;
+        if x + 1 < width {
+            let next = disparity_at(x + 1);
+            if (next - d).abs() < TEAR_DISPARITY {
+                end = end.max((x as f32 + 1.5 - next) * scale - scale * 0.5);
+            }
+        }
+        let first = (start - 0.5).ceil().max(0.0) as usize;
+        let last = ((end - 0.5).ceil() as i64).min(samples as i64);
+        for j in first..last.max(first as i64) as usize {
+            if d > disparity[j] {
+                disparity[j] = d;
+                source_x[j] = x as f32;
             }
         }
     }
-    target
+    (disparity, source_x)
+}
+
+fn shade_row(src: &[u8], disparity: &[f32], source_x: &[f32]) -> Vec<[f32; 3]> {
+    let samples = disparity.len();
+    let mut colors = vec![[0.0f32; 3]; samples];
+    let mut j = 0;
+    while j < samples {
+        if disparity[j] != HOLE {
+            colors[j] = sample_bilinear(src, source_x[j]);
+            j += 1;
+            continue;
+        }
+        let end = (j..samples)
+            .find(|&i| disparity[i] != HOLE)
+            .unwrap_or(samples);
+        fill_hole(src, disparity, source_x, j, end, &mut colors);
+        j = end;
+    }
+    colors
 }
 
 // Holes are background the left eye never saw. Mirror the background texture next to the hole
 // into it instead of repeating the foreground edge.
-fn fill_hole(src: &[u8], target_disparity: &[f32], start: usize, end: usize, out: &mut [u8]) {
-    let width = target_disparity.len();
+fn fill_hole(
+    src: &[u8],
+    disparity: &[f32],
+    source_x: &[f32],
+    start: usize,
+    end: usize,
+    colors: &mut [[f32; 3]],
+) {
+    let samples = disparity.len();
     let left = start.checked_sub(1);
-    let right = (end < width).then_some(end);
+    let right = (end < samples).then_some(end);
     let background = match (left, right) {
-        (Some(l), Some(r)) if target_disparity[l] < target_disparity[r] => l,
+        (Some(l), Some(r)) if disparity[l] < disparity[r] => l,
         (_, Some(r)) => r,
         (Some(l), None) => l,
         (None, None) => return,
     };
-    let anchor = background as f32 + target_disparity[background];
-    for x in start..end {
-        let distance = (x as f32 - background as f32).abs();
-        let source_x = if background >= end {
+    let anchor = source_x[background];
+    for j in start..end {
+        let distance = (j as f32 - background as f32).abs() / SUPERSAMPLE as f32;
+        let x = if background >= end {
             anchor + distance
         } else {
             anchor - distance
         };
-        let pixel = sample_bilinear(src, source_x);
-        out[x * 3..x * 3 + 3].copy_from_slice(&pixel);
+        colors[j] = sample_bilinear(src, x);
     }
 }
 
-fn sample_bilinear(row: &[u8], x: f32) -> [u8; 3] {
+fn sample_bilinear(row: &[u8], x: f32) -> [f32; 3] {
     let width = row.len() / 3;
     let x = x.clamp(0.0, (width - 1) as f32);
     let x0 = x.floor() as usize;
     let x1 = (x0 + 1).min(width - 1);
     let t = x - x0 as f32;
-    let mut pixel = [0u8; 3];
+    let mut pixel = [0.0f32; 3];
     for c in 0..3 {
         let a = row[x0 * 3 + c] as f32;
         let b = row[x1 * 3 + c] as f32;
-        pixel[c] = (a + (b - a) * t).round() as u8;
+        pixel[c] = a + (b - a) * t;
     }
     pixel
 }
@@ -225,6 +268,25 @@ mod tests {
         for x in 52..60 {
             assert_eq!(pixel(x), BACKGROUND, "column {} should show background", x);
         }
+    }
+
+    #[test]
+    fn half_pixel_silhouette_blends_edge_pixels() {
+        let (src, depth) = block_scene(100);
+        let depth: Vec<f32> = depth.iter().map(|d| d * 0.5).collect();
+        let mut out = vec![0u8; src.len()];
+        render_right_row(&src, &depth, 5.0, &mut out);
+
+        for x in [37, 57] {
+            let red = out[x * 3];
+            assert!(
+                red > BACKGROUND[0] + 50 && red < FOREGROUND[0] - 50,
+                "column {} should be a foreground/background blend, got {:?}",
+                x,
+                &out[x * 3..x * 3 + 3]
+            );
+        }
+        assert_eq!(&out[45 * 3..45 * 3 + 3], &FOREGROUND);
     }
 
     #[test]
