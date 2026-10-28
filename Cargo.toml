@@ -98,3 +98,8 @@ required-features = ["coreml"]
 name = "photo"
 path = "examples/photo.rs"
 required-features = ["onnx"]
+
+[[example]]
+name = "stereo_matte"
+path = "examples/stereo_matte.rs"
+required-features = ["coreml"]
