@@ -8,6 +8,7 @@ fn main() {
 			println!("cargo:rerun-if-changed=swift-bridge/CoreMLDepth.swift");
 			println!("cargo:rerun-if-changed=swift-bridge/SpatialVideoWriter.swift");
 			println!("cargo:rerun-if-changed=swift-bridge/SpatialPhotoWriter.swift");
+			println!("cargo:rerun-if-changed=swift-bridge/ForegroundMatte.swift");
 
 			let out_dir = env::var("OUT_DIR").unwrap();
 			let lib_path = format!("{}/libCoreMLDepth.a", out_dir);
@@ -29,6 +30,7 @@ fn main() {
 				"swift-bridge/CoreMLDepth.swift",
 				"swift-bridge/SpatialVideoWriter.swift",
 				"swift-bridge/SpatialPhotoWriter.swift",
+				"swift-bridge/ForegroundMatte.swift",
 				"-o",
 				&lib_path,
 			]);
@@ -56,6 +58,7 @@ fn main() {
 			println!("cargo:rustc-link-lib=framework=ImageIO");
 			println!("cargo:rustc-link-lib=framework=CoreGraphics");
 			println!("cargo:rustc-link-lib=framework=UniformTypeIdentifiers");
+			println!("cargo:rustc-link-lib=framework=Vision");
 
 			let sdk_path = String::from_utf8(
 				Command::new("xcrun")
