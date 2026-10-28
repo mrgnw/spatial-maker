@@ -46,11 +46,11 @@ pub fn refine_depth_edges(
         .collect()
 }
 
-fn multiply(a: &[f32], b: &[f32]) -> Vec<f32> {
+pub(crate) fn multiply(a: &[f32], b: &[f32]) -> Vec<f32> {
     a.par_iter().zip(b.par_iter()).map(|(x, y)| x * y).collect()
 }
 
-fn box_mean(values: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
+pub(crate) fn box_mean(values: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
     let rows = box_mean_rows(values, width, radius);
     let columns = box_mean_rows(&transpose(&rows, width, height), height, radius);
     transpose(&columns, height, width)

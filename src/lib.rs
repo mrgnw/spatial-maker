@@ -3,6 +3,7 @@ pub mod depth_filter;
 pub mod depth_refine;
 pub mod error;
 pub mod image_loader;
+pub mod matte;
 pub mod model;
 pub mod output;
 pub mod stereo;

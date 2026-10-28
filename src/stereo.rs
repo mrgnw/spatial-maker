@@ -4,9 +4,9 @@ use image::{DynamicImage, ImageBuffer, Luma, Rgb};
 use ndarray::Array2;
 use rayon::prelude::*;
 
-const HOLE: f32 = f32::NEG_INFINITY;
-const SUPERSAMPLE: usize = 4;
-const TEAR_DISPARITY: f32 = 1.0;
+pub(crate) const HOLE: f32 = f32::NEG_INFINITY;
+pub(crate) const SUPERSAMPLE: usize = 4;
+pub(crate) const TEAR_DISPARITY: f32 = 1.0;
 
 pub fn generate_stereo_pair(
     image: &DynamicImage,
@@ -86,7 +86,7 @@ pub fn generate_stereo_pair_with_refinement(
     Ok((image.clone(), DynamicImage::ImageRgb8(right)))
 }
 
-fn depth_at_image_size(depth: &Array2<f32>, width: usize, height: usize) -> Vec<f32> {
+pub(crate) fn depth_at_image_size(depth: &Array2<f32>, width: usize, height: usize) -> Vec<f32> {
     let (depth_height, depth_width) = depth.dim();
     let values: Vec<f32> = depth.iter().copied().collect();
     if depth_width == width && depth_height == height {
@@ -120,7 +120,11 @@ fn render_right_row(src: &[u8], depth: &[f32], max_disparity: f32, out: &mut [u8
 
     let (disparity, source_x) = rasterize_row(depth, max_disparity);
     let colors = shade_row(src, &disparity, &source_x);
+    downsample_row(&colors, out);
+}
 
+pub(crate) fn downsample_row(colors: &[[f32; 3]], out: &mut [u8]) {
+    assert_eq!(colors.len() * 3, out.len() * SUPERSAMPLE);
     for (x, pixel) in out.chunks_exact_mut(3).enumerate() {
         let samples = &colors[x * SUPERSAMPLE..(x + 1) * SUPERSAMPLE];
         for c in 0..3 {
@@ -133,8 +137,8 @@ fn render_right_row(src: &[u8], depth: &[f32], max_disparity: f32, out: &mut [u8
 // Each source pixel covers one pixel of width around its shifted centre. When its right
 // neighbour is on the same surface (disparity within TEAR_DISPARITY), the footprint stretches to
 // meet it so slopes don't crack; across a larger jump it tears and leaves a hole. Overlaps keep
-// the nearest surface.
-fn rasterize_row(depth: &[f32], max_disparity: f32) -> (Vec<f32>, Vec<f32>) {
+// the nearest surface. NaN depth marks a pixel that belongs to another layer: it covers nothing.
+pub(crate) fn rasterize_row(depth: &[f32], max_disparity: f32) -> (Vec<f32>, Vec<f32>) {
     let width = depth.len();
     let samples = width * SUPERSAMPLE;
     let scale = SUPERSAMPLE as f32;
@@ -144,6 +148,9 @@ fn rasterize_row(depth: &[f32], max_disparity: f32) -> (Vec<f32>, Vec<f32>) {
     let disparity_at = |x: usize| depth[x].clamp(0.0, 1.0) * max_disparity;
     for x in 0..width {
         let d = disparity_at(x);
+        if d.is_nan() {
+            continue;
+        }
         let centre = (x as f32 + 0.5 - d) * scale;
         let start = centre - scale * 0.5;
         let mut end = centre + scale * 0.5;
@@ -165,7 +172,7 @@ fn rasterize_row(depth: &[f32], max_disparity: f32) -> (Vec<f32>, Vec<f32>) {
     (disparity, source_x)
 }
 
-fn shade_row(src: &[u8], disparity: &[f32], source_x: &[f32]) -> Vec<[f32; 3]> {
+pub(crate) fn shade_row(src: &[u8], disparity: &[f32], source_x: &[f32]) -> Vec<[f32; 3]> {
     let samples = disparity.len();
     let mut colors = vec![[0.0f32; 3]; samples];
     let mut j = 0;
@@ -215,7 +222,7 @@ fn fill_hole(
     }
 }
 
-fn sample_bilinear(row: &[u8], x: f32) -> [f32; 3] {
+pub(crate) fn sample_bilinear(row: &[u8], x: f32) -> [f32; 3] {
     let width = row.len() / 3;
     let x = x.clamp(0.0, (width - 1) as f32);
     let x0 = x.floor() as usize;
