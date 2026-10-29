@@ -7,6 +7,7 @@ use rayon::prelude::*;
 const HOLE: f32 = f32::NEG_INFINITY;
 const SUPERSAMPLE: usize = 4;
 const TEAR_DISPARITY: f32 = 1.0;
+const HOLE_SMOOTH_RADIUS: usize = 4;
 
 pub fn generate_stereo_pair(
     image: &DynamicImage,
@@ -73,15 +74,18 @@ pub fn generate_stereo_pair_with_refinement(
     };
     let mut right = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(width as u32, height as u32);
     let row_bytes = width * 3;
+    let mut holes = vec![0u8; width * height];
 
     right
         .as_mut()
         .par_chunks_mut(row_bytes)
+        .zip(holes.par_chunks_mut(width))
         .zip(src.as_raw().par_chunks(row_bytes))
         .zip(depth.par_chunks(width))
-        .for_each(|((out_row, src_row), depth_row)| {
-            render_right_row(src_row, depth_row, max_disparity as f32, out_row);
+        .for_each(|(((out_row, hole_row), src_row), depth_row)| {
+            render_right_row(src_row, depth_row, max_disparity as f32, out_row, hole_row);
         });
+    smooth_holes_vertically(right.as_mut(), &holes, width, HOLE_SMOOTH_RADIUS);
 
     Ok((image.clone(), DynamicImage::ImageRgb8(right)))
 }
@@ -113,21 +117,63 @@ fn depth_at_image_size(depth: &Array2<f32>, width: usize, height: usize) -> Vec<
 // The row is rendered at SUPERSAMPLE x horizontal resolution and averaged back down, so a
 // silhouette that lands between pixels gives that pixel partial coverage instead of a whole-pixel
 // step. That is what removes the staircase along slanted edges.
-fn render_right_row(src: &[u8], depth: &[f32], max_disparity: f32, out: &mut [u8]) {
+//
+// `holes` gets, per pixel, how many of its SUPERSAMPLE samples were filled in rather than seen.
+fn render_right_row(
+    src: &[u8],
+    depth: &[f32],
+    max_disparity: f32,
+    out: &mut [u8],
+    holes: &mut [u8],
+) {
     let width = depth.len();
     assert_eq!(src.len(), width * 3);
     assert_eq!(out.len(), width * 3);
+    assert_eq!(holes.len(), width);
 
     let (disparity, source_x) = rasterize_row(depth, max_disparity);
     let colors = shade_row(src, &disparity, &source_x);
 
     for (x, pixel) in out.chunks_exact_mut(3).enumerate() {
+        holes[x] = disparity[x * SUPERSAMPLE..(x + 1) * SUPERSAMPLE]
+            .iter()
+            .filter(|&&d| d == HOLE)
+            .count() as u8;
         let samples = &colors[x * SUPERSAMPLE..(x + 1) * SUPERSAMPLE];
         for c in 0..3 {
             let sum: f32 = samples.iter().map(|s| s[c]).sum();
             pixel[c] = (sum / SUPERSAMPLE as f32).round() as u8;
         }
     }
+}
+
+// Rows fill a hole independently, so the mirrored texture changes from row to row. Average each
+// fully filled pixel with the filled pixels above and below it. Pixels that show any real source
+// stay untouched, so edges outside holes keep their sharpness.
+fn smooth_holes_vertically(rgb: &mut [u8], holes: &[u8], width: usize, radius: usize) {
+    let height = holes.len() / width;
+    let source = rgb.to_vec();
+    let is_hole = |x: usize, y: usize| holes[y * width + x] == SUPERSAMPLE as u8;
+    rgb.par_chunks_mut(width * 3)
+        .enumerate()
+        .for_each(|(y, out_row)| {
+            for x in (0..width).filter(|&x| is_hole(x, y)) {
+                let mut sum = [0u32; 3];
+                let mut count = 0u32;
+                for yy in y.saturating_sub(radius)..(y + radius + 1).min(height) {
+                    if !is_hole(x, yy) {
+                        continue;
+                    }
+                    for c in 0..3 {
+                        sum[c] += source[(yy * width + x) * 3 + c] as u32;
+                    }
+                    count += 1;
+                }
+                for c in 0..3 {
+                    out_row[x * 3 + c] = ((sum[c] + count / 2) / count) as u8;
+                }
+            }
+        });
 }
 
 // Each source pixel covers one pixel of width around its shifted centre. When its right
@@ -252,7 +298,7 @@ mod tests {
     fn flat_depth_leaves_row_unchanged() {
         let (src, _) = block_scene(100);
         let mut out = vec![0u8; src.len()];
-        render_right_row(&src, &vec![0.0; 100], 10.0, &mut out);
+        render_right_row(&src, &vec![0.0; 100], 10.0, &mut out, &mut vec![0; 100]);
         assert_eq!(out, src);
     }
 
@@ -260,7 +306,7 @@ mod tests {
     fn uncovered_background_is_not_filled_with_foreground() {
         let (src, depth) = block_scene(100);
         let mut out = vec![0u8; src.len()];
-        render_right_row(&src, &depth, 10.0, &mut out);
+        render_right_row(&src, &depth, 10.0, &mut out, &mut vec![0; 100]);
 
         let pixel = |x: usize| [out[x * 3], out[x * 3 + 1], out[x * 3 + 2]];
         assert_eq!(pixel(35), FOREGROUND);
@@ -275,7 +321,7 @@ mod tests {
         let (src, depth) = block_scene(100);
         let depth: Vec<f32> = depth.iter().map(|d| d * 0.5).collect();
         let mut out = vec![0u8; src.len()];
-        render_right_row(&src, &depth, 5.0, &mut out);
+        render_right_row(&src, &depth, 5.0, &mut out, &mut vec![0; 100]);
 
         for x in [37, 57] {
             let red = out[x * 3];
@@ -287,6 +333,71 @@ mod tests {
             );
         }
         assert_eq!(&out[45 * 3..45 * 3 + 3], &FOREGROUND);
+    }
+
+    #[test]
+    fn wide_hole_fill_varies_smoothly_between_rows() {
+        let (width, height) = (80usize, 40usize);
+        let mut image = DynamicImage::new_rgb8(width as u32, height as u32).to_rgb8();
+        let mut depth = Array2::<f32>::zeros((height, width));
+        for y in 0..height {
+            for x in 0..width {
+                let near = (30..40).contains(&x);
+                let noise = ((x * 7919 + y * 104729) % 97) as u8 * 2;
+                let value = if near { 250 } else { 20 + noise };
+                image.put_pixel(x as u32, y as u32, Rgb([value; 3]));
+                depth[[y, x]] = if near { 1.0 } else { 0.0 };
+            }
+        }
+
+        let (_, right) = generate_stereo_pair_with_refinement(
+            &DynamicImage::ImageRgb8(image.clone()),
+            &depth,
+            10,
+            None,
+        )
+        .unwrap();
+        let right = right.to_rgb8();
+
+        let row_to_row = |pixels: &dyn Fn(usize, usize) -> u8| -> f32 {
+            let mut total = 0.0;
+            let mut count = 0.0;
+            for y in 10..height - 11 {
+                for x in 32..38 {
+                    total += (pixels(x, y) as f32 - pixels(x, y + 1) as f32).abs();
+                    count += 1.0;
+                }
+            }
+            total / count
+        };
+        let mut unsmoothed = vec![0u8; width * 3 * height];
+        for y in 0..height {
+            let depth_row: Vec<f32> = (0..width).map(|x| depth[[y, x]]).collect();
+            let src_row = &image.as_raw()[y * width * 3..(y + 1) * width * 3];
+            let out_row = &mut unsmoothed[y * width * 3..(y + 1) * width * 3];
+            render_right_row(src_row, &depth_row, 10.0, out_row, &mut vec![0; width]);
+        }
+
+        let before = row_to_row(&|x, y| unsmoothed[(y * width + x) * 3]);
+        let after = row_to_row(&|x, y| right.get_pixel(x as u32, y as u32)[0]);
+        assert!(
+            after < before / 3.0,
+            "fill should vary less between rows, before {} after {}",
+            before,
+            after
+        );
+
+        for y in 0..height {
+            for x in (0..28).chain(42..width) {
+                assert_eq!(
+                    right.get_pixel(x as u32, y as u32)[0],
+                    unsmoothed[(y * width + x) * 3],
+                    "pixel ({}, {}) is outside the hole and must not change",
+                    x,
+                    y
+                );
+            }
+        }
     }
 
     #[test]
