@@ -10,7 +10,6 @@ repository = "https://github.com/mrgnw/spatial-maker"
 readme = "RUST_README.md"
 rust-version = "1.75"
 exclude = [
-	"spatial-maker-rust/",
 	"test_*.jpg",
 	"*.py",
 	"benchmarking/",
