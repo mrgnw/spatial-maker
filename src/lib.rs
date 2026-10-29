@@ -78,7 +78,7 @@ impl std::str::FromStr for NormalizeMode {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SpatialConfig {
 	pub encoder_size: String,
-	pub max_disparity: u32,
+	pub max_disparity: Option<u32>,
 	pub target_depth_size: u32,
 	pub temporal_alpha: f32,
 	pub bilateral_sigma_space: f32,
@@ -87,13 +87,21 @@ pub struct SpatialConfig {
 	pub normalize_mode: NormalizeMode,
 }
 
+pub const DEFAULT_DISPARITY_FRACTION: f32 = 0.012;
+
+impl SpatialConfig {
+	pub fn max_disparity_px(&self, width: u32) -> u32 {
+		self.max_disparity.unwrap_or_else(|| (width as f32 * DEFAULT_DISPARITY_FRACTION).round() as u32)
+	}
+}
+
 pub type StereoOutputFormat = OutputFormat;
 
 impl Default for SpatialConfig {
 	fn default() -> Self {
 		Self {
 			encoder_size: "s".to_string(),
-			max_disparity: 30,
+			max_disparity: None,
 			target_depth_size: 518,
 			temporal_alpha: 0.7,
 			bilateral_sigma_space: 5.0,
@@ -208,7 +216,7 @@ pub async fn process_photo(
 			SpatialError::ConfigError("Depth map required for stereo but not available".to_string())
 		})?;
 		let input_image = load_image(input_path).await?;
-		let (left, right) = generate_stereo_pair(&input_image, dm, config.max_disparity, stereo::EdgeRefinement::for_photo())?;
+		let (left, right) = generate_stereo_pair(&input_image, dm, config.max_disparity_px(input_image.width()), stereo::EdgeRefinement::for_photo())?;
 		let src_ext = input_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
 		let stereo_ext = match src_ext.as_str() {
 			"heic" | "heif" | "avif" | "jxl" => "jpg",
@@ -237,4 +245,24 @@ pub async fn process_video_sbs(
 	force: bool,
 ) -> SpatialResult<()> {
 	video::process_video(input_path, output_path, config, &[OutputType::Spatial], progress_cb, force).await
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn default_disparity_scales_with_width() {
+		let config = SpatialConfig::default();
+		assert_eq!(config.max_disparity_px(2500), 30);
+		assert_eq!(config.max_disparity_px(1280), 15);
+		assert_eq!(config.max_disparity_px(4032), 48);
+	}
+
+	#[test]
+	fn explicit_disparity_overrides_width() {
+		let config = SpatialConfig { max_disparity: Some(40), ..SpatialConfig::default() };
+		assert_eq!(config.max_disparity_px(1280), 40);
+		assert_eq!(config.max_disparity_px(4032), 40);
+	}
 }
