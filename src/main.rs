@@ -5,7 +5,7 @@ use spatial_maker::{
 	needs_stereo, parse_output_types,
 	tui::{self, AppState, FileStatus, MediaType},
 	load_image, model, generate_stereo_pair_with_progress,
-	needs_depth, depth_formats, save_depth_map, load_depth_map, save_stereo_image, spatial_photo_path,
+	comfort_disparity_adjustment, needs_depth, depth_formats, save_depth_map, load_depth_map, save_stereo_image, spatial_photo_path,
 	CoreMLDepthEstimator,
 };
 use std::path::PathBuf;
@@ -433,10 +433,11 @@ async fn process_file(
 				});
 
 				let tx_clone = tx.clone();
+				let max_disparity = config.max_disparity_px(input_image.width());
 				let (left, right) = generate_stereo_pair_with_progress(
 					&input_image,
 					dm,
-					config.max_disparity_px(input_image.width()),
+					max_disparity,
 					spatial_maker::stereo::EdgeRefinement::for_photo(),
 					Some(move |progress| {
 						let _ = tx_clone.send(TuiEvent::StageUpdate {
@@ -469,6 +470,7 @@ async fn process_file(
 					spatial_photo: has_spatial.then_some(SpatialPhotoConfig {
 						quality: heic_quality,
 						keep_layout_image: has_layout,
+						disparity_adjustment: comfort_disparity_adjustment(max_disparity, input_image.width()),
 					}),
 				};
 
