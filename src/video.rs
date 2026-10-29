@@ -645,7 +645,7 @@ pub async fn process_video(
 		}
 
 		if let Some(ref stereo_tx) = stereo_tx_opt {
-			let (left, right) = generate_stereo_pair(&frame, &depth_map, config.max_disparity, EdgeRefinement::for_video())?;
+			let (left, right) = generate_stereo_pair(&frame, &depth_map, config.max_disparity_px(frame.width()), EdgeRefinement::for_video())?;
 			if stereo_tx.send((left, right)).await.is_err() {
 				break;
 			}

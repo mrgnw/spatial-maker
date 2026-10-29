@@ -106,7 +106,7 @@ Spatial Video (.mov)
 | Parameter | Description | Recommended |
 |-----------|-------------|-------------|
 | `--encoder` | Depth model size (vits/vitb/vitl) | `vits` for speed, `vitl` for quality |
-| `--max-disparity` | 3D intensity in pixels | 20-50 for 1080p |
+| `--max-disparity` | 3D intensity in pixels | default 1.2% of image width (30 at 2500 px); absolute override |
 | `--duration` | Limit processing time (seconds) | Use for testing |
 | `--skip-downscale` | Keep original resolution | Only if already 1080p |
 | `--json-progress` | Emit JSON progress to stdout | For GUI integration |
