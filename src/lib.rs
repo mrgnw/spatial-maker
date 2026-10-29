@@ -25,7 +25,7 @@ pub use error::{SpatialError, SpatialResult};
 pub use image_loader::load_image;
 pub use model::{find_model, get_checkpoint_dir, model_exists};
 pub use output::{
-	create_sbs_image, save_stereo_image, spatial_photo_path,
+	comfort_disparity_adjustment, create_sbs_image, save_stereo_image, spatial_photo_path,
 	DepthFormat, ImageEncoding, SpatialPhotoConfig, DEFAULT_HEIC_QUALITY, OutputFormat, OutputOptions, OutputType,
 	depth_formats, load_depth_map, needs_depth, needs_stereo, parse_output_types, save_depth_map, stereo_types,
 };
@@ -216,7 +216,8 @@ pub async fn process_photo(
 			SpatialError::ConfigError("Depth map required for stereo but not available".to_string())
 		})?;
 		let input_image = load_image(input_path).await?;
-		let (left, right) = generate_stereo_pair(&input_image, dm, config.max_disparity_px(input_image.width()), stereo::EdgeRefinement::for_photo())?;
+		let max_disparity = config.max_disparity_px(input_image.width());
+		let (left, right) = generate_stereo_pair(&input_image, dm, max_disparity, stereo::EdgeRefinement::for_photo())?;
 		let src_ext = input_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
 		let stereo_ext = match src_ext.as_str() {
 			"heic" | "heif" | "avif" | "jxl" => "jpg",
@@ -224,6 +225,10 @@ pub async fn process_photo(
 			other => other,
 		};
 		let stereo_path = parent.join(format!("{}-spatial.{}", stem, stereo_ext));
+		let mut output_options = output_options;
+		if let Some(photo) = output_options.spatial_photo.as_mut() {
+			photo.disparity_adjustment = comfort_disparity_adjustment(max_disparity, input_image.width());
+		}
 		let spatial_photo = output_options.spatial_photo.clone();
 		save_stereo_image(&left, &right, &stereo_path, output_options)?;
 		if spatial_photo.as_ref().map_or(true, |c| c.keep_layout_image) {

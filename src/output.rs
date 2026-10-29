@@ -391,10 +391,21 @@ impl ImageEncoding {
 
 pub const DEFAULT_HEIC_QUALITY: u8 = 80;
 
+const MIN_DISPARITY_ADJUSTMENT: f64 = 0.02;
+const MAX_DISPARITY_ADJUSTMENT: f64 = 0.03;
+const DISPARITY_ADJUSTMENT_MARGIN: f64 = 0.005;
+
+pub fn comfort_disparity_adjustment(max_disparity_px: u32, width: u32) -> f64 {
+	assert!(width > 0);
+	let nearest_behind_window = max_disparity_px as f64 / width as f64 + DISPARITY_ADJUSTMENT_MARGIN;
+	nearest_behind_window.clamp(MIN_DISPARITY_ADJUSTMENT, MAX_DISPARITY_ADJUSTMENT)
+}
+
 #[derive(Clone, Debug)]
 pub struct SpatialPhotoConfig {
     pub quality: u8,
     pub keep_layout_image: bool,
+    pub disparity_adjustment: f64,
 }
 
 impl Default for SpatialPhotoConfig {
@@ -402,6 +413,7 @@ impl Default for SpatialPhotoConfig {
         Self {
             quality: DEFAULT_HEIC_QUALITY,
             keep_layout_image: false,
+            disparity_adjustment: 0.0,
         }
     }
 }
@@ -470,7 +482,7 @@ pub fn save_stereo_image(
     }
 
     if let Some(config) = options.spatial_photo {
-        save_spatial_photo(left, right, &spatial_photo_path(output_path), config.quality)?;
+        save_spatial_photo(left, right, &spatial_photo_path(output_path), config.quality, config.disparity_adjustment)?;
     }
 
     Ok(())
@@ -486,11 +498,13 @@ fn save_spatial_photo(
     right: &DynamicImage,
     path: &Path,
     quality: u8,
+    disparity_adjustment: f64,
 ) -> SpatialResult<()> {
     use crate::spatial_photo::write_spatial_photo;
     use crate::spatial_video::SpatialMetadata;
 
-    write_spatial_photo(path, left, right, quality, &SpatialMetadata::default())
+    let metadata = SpatialMetadata { disparity_adjustment, ..SpatialMetadata::default() };
+    write_spatial_photo(path, left, right, quality, &metadata)
 }
 
 #[cfg(not(all(target_os = "macos", feature = "coreml")))]
@@ -499,6 +513,7 @@ fn save_spatial_photo(
     _right: &DynamicImage,
     path: &Path,
     _quality: u8,
+    _disparity_adjustment: f64,
 ) -> SpatialResult<()> {
     Err(SpatialError::ConfigError(format!(
         "Spatial photos need macOS with the 'coreml' feature: {}",
@@ -601,6 +616,21 @@ fn save_image(image: &DynamicImage, path: &Path, encoding: ImageEncoding) -> Spa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+	#[test]
+	fn default_depth_gets_apple_default_adjustment() {
+		assert_eq!(comfort_disparity_adjustment(30, 2500), 0.02);
+	}
+
+	#[test]
+	fn strong_depth_raises_adjustment() {
+		assert!((comfort_disparity_adjustment(50, 2500) - 0.025).abs() < 1e-9);
+	}
+
+	#[test]
+	fn adjustment_is_capped() {
+		assert_eq!(comfort_disparity_adjustment(200, 1000), 0.03);
+	}
 
     #[test]
     fn png16_depth_round_trips() {

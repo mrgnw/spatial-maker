@@ -434,8 +434,10 @@ fn encode_spatial_video(
 	output_path: std::path::PathBuf,
 	input_path: std::path::PathBuf,
 	metadata: VideoMetadata,
+	max_disparity: u32,
 	mut rx: mpsc::Receiver<(DynamicImage, DynamicImage)>,
 ) -> SpatialResult<()> {
+	use crate::output::comfort_disparity_adjustment;
 	use crate::spatial_video::{SpatialMetadata, SpatialVideoWriter};
 
 	let audio_source = metadata.has_audio.then_some(input_path.as_path());
@@ -445,7 +447,10 @@ fn encode_spatial_video(
 		metadata.width,
 		metadata.height,
 		metadata.fps,
-		&SpatialMetadata::default(),
+		&SpatialMetadata {
+			disparity_adjustment: comfort_disparity_adjustment(max_disparity, metadata.width),
+			..SpatialMetadata::default()
+		},
 	)?;
 	while let Some((left, right)) = rx.blocking_recv() {
 		writer.append(&left, &right)?;
@@ -556,7 +561,8 @@ pub async fn process_video(
 		#[cfg(all(target_os = "macos", feature = "coreml"))]
 		let handle = {
 			let (output, input, metadata) = (stereo_output.clone(), input_path.to_path_buf(), metadata.clone());
-			tokio::task::spawn_blocking(move || encode_spatial_video(output, input, metadata, rx))
+			let max_disparity = config.max_disparity_px(metadata.width);
+			tokio::task::spawn_blocking(move || encode_spatial_video(output, input, metadata, max_disparity, rx))
 		};
 		#[cfg(not(all(target_os = "macos", feature = "coreml")))]
 		let handle = tokio::spawn(encode_stereo_video(stereo_output.clone(), metadata.clone(), rx));
