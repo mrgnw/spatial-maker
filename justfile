@@ -64,7 +64,7 @@ release: dist
 
 # Install locally
 install:
-	cargo install --path .
+	cargo install --path . --root ~/.local --force
 
 # Upload CoreML models to HuggingFace
 upload-models:
