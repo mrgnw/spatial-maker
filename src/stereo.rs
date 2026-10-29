@@ -1,4 +1,7 @@
-use crate::depth_refine::{refine_depth_edges, DEFAULT_EPSILON, DEFAULT_RADIUS_FRACTION};
+use crate::depth_refine::{
+    dilate_foreground, median_depth_edges, median_stride, refine_depth_edges, DEFAULT_EPSILON,
+    DEFAULT_RADIUS_FRACTION, MEDIAN_SIGMA_COLOR,
+};
 use crate::error::{SpatialError, SpatialResult};
 use image::{DynamicImage, ImageBuffer, Luma, Rgb};
 use ndarray::Array2;
@@ -13,42 +16,78 @@ pub fn generate_stereo_pair(
     image: &DynamicImage,
     depth: &Array2<f32>,
     max_disparity: u32,
+    refinement: EdgeRefinement,
 ) -> SpatialResult<(DynamicImage, DynamicImage)> {
-    generate_stereo_pair_with_progress(image, depth, max_disparity, None::<fn(f64)>)
+    generate_stereo_pair_with_refinement(image, depth, max_disparity, Some(refinement))
 }
 
 pub fn generate_stereo_pair_with_progress<F>(
     image: &DynamicImage,
     depth: &Array2<f32>,
     max_disparity: u32,
+    refinement: EdgeRefinement,
     mut progress_callback: Option<F>,
 ) -> SpatialResult<(DynamicImage, DynamicImage)>
 where
     F: FnMut(f64),
 {
-    let pair = generate_stereo_pair_with_refinement(
-        image,
-        depth,
-        max_disparity,
-        Some(EdgeRefinement::default()),
-    )?;
+    let pair = generate_stereo_pair(image, depth, max_disparity, refinement)?;
     if let Some(ref mut cb) = progress_callback {
         cb(100.0);
     }
     Ok(pair)
 }
 
+// How depth edges are moved onto the photo's edges before warping.
 #[derive(Clone, Copy, Debug)]
-pub struct EdgeRefinement {
-    pub radius_fraction: f32,
-    pub epsilon: f32,
+pub enum EdgeRefinement {
+    // Guided filter: cheap enough per video frame, but leaves edges as short ramps, so
+    // background lines next to thin foreground can bend.
+    Guided {
+        radius_fraction: f32,
+        epsilon: f32,
+    },
+    // Joint weighted median on the raw depth, then foreground dilation: edges become steps on
+    // the photo's edges. ~5x the guided filter's cost, so photos only.
+    Median {
+        sigma_color: f32,
+        passes: usize,
+        dilate_px: usize,
+    },
 }
 
-impl Default for EdgeRefinement {
-    fn default() -> Self {
-        Self {
+impl EdgeRefinement {
+    pub fn for_photo() -> Self {
+        Self::Median {
+            sigma_color: MEDIAN_SIGMA_COLOR,
+            passes: 2,
+            dilate_px: 1,
+        }
+    }
+
+    pub fn for_video() -> Self {
+        Self::Guided {
             radius_fraction: DEFAULT_RADIUS_FRACTION,
             epsilon: DEFAULT_EPSILON,
+        }
+    }
+
+    fn apply(self, src: &image::RgbImage, depth: &[f32]) -> Vec<f32> {
+        let (width, height) = (src.width() as usize, src.height() as usize);
+        match self {
+            Self::Guided {
+                radius_fraction,
+                epsilon,
+            } => refine_depth_edges(src, depth, radius_fraction, epsilon),
+            Self::Median {
+                sigma_color,
+                passes,
+                dilate_px,
+            } => {
+                let stride = median_stride(width, height);
+                let median = median_depth_edges(src, depth, stride, sigma_color, passes);
+                dilate_foreground(&median, width, height, dilate_px)
+            }
         }
     }
 }
@@ -69,7 +108,7 @@ pub fn generate_stereo_pair_with_refinement(
 
     let depth = depth_at_image_size(depth, width, height);
     let depth = match refinement {
-        Some(r) => refine_depth_edges(&src, &depth, r.radius_fraction, r.epsilon),
+        Some(r) => r.apply(&src, &depth),
         None => depth,
     };
     let mut right = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(width as u32, height as u32);
@@ -404,7 +443,8 @@ mod tests {
     fn pair_keeps_image_size() {
         let image = DynamicImage::new_rgb8(64, 32);
         let depth = Array2::<f32>::from_elem((16, 32), 0.5);
-        let (left, right) = generate_stereo_pair(&image, &depth, 8).unwrap();
+        let (left, right) =
+            generate_stereo_pair(&image, &depth, 8, EdgeRefinement::for_video()).unwrap();
         assert_eq!((left.width(), left.height()), (64, 32));
         assert_eq!((right.width(), right.height()), (64, 32));
     }

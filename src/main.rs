@@ -437,6 +437,7 @@ async fn process_file(
 					&input_image,
 					dm,
 					config.max_disparity,
+					spatial_maker::stereo::EdgeRefinement::for_photo(),
 					Some(move |progress| {
 						let _ = tx_clone.send(TuiEvent::StageUpdate {
 							index,
