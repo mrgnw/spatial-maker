@@ -50,7 +50,9 @@ pub const MEDIAN_TAP_RADIUS: usize = 3;
 pub const MEDIAN_SIGMA_TAPS: f32 = 4.0;
 pub const MEDIAN_SIGMA_COLOR: f32 = 0.1;
 pub const MEDIAN_REFERENCE_LONG_SIDE: f32 = 1024.0;
-
+// Only windows that straddle a depth edge are filtered. On a smooth surface the median would
+// terrace the slope, so a window spanning less depth than this keeps its centre value.
+const MEDIAN_EDGE_RANGE: f32 = 1.0 / 64.0;
 // The guided filter turns a depth edge into a ramp, so background next to thin foreground gets
 // in-between depth and its lines bend in the other eye. A joint weighted median (Shih et al. 2020)
 // only ever outputs depth values from its window, weighted towards pixels of the same colour, so a
@@ -86,7 +88,7 @@ pub fn median_depth_edges(
 
     let mut current = depth.to_vec();
     for _ in 0..passes {
-        current = median_pass(&colors, &current, width, height, &taps, falloff);
+        current = median_pass(&colors, &current, width, height, stride, &taps, falloff);
     }
     current
 }
@@ -96,16 +98,22 @@ fn median_pass(
     depth: &[f32],
     width: usize,
     height: usize,
+    stride: usize,
     taps: &[(isize, isize, f32)],
     falloff: f32,
 ) -> Vec<f32> {
-    let mut out = vec![0.0f32; width * height];
+    let low = window_extreme(depth, width, height, stride, f32::min);
+    let high = window_extreme(depth, width, height, stride, f32::max);
+    let mut out = depth.to_vec();
     out.par_chunks_mut(width)
         .enumerate()
         .for_each(|(y, out_row)| {
             let mut samples = Vec::with_capacity(taps.len());
             for (x, out) in out_row.iter_mut().enumerate() {
-                let centre = colors[y * width + x];
+                let centre = y * width + x;
+                if high[centre] - low[centre] < MEDIAN_EDGE_RANGE {
+                    continue;
+                }
                 samples.clear();
                 for &(dx, dy, spatial) in taps {
                     let (sx, sy) = (x as isize + dx, y as isize + dy);
@@ -113,11 +121,47 @@ fn median_pass(
                         continue;
                     }
                     let i = sy as usize * width + sx as usize;
-                    let distance_squared: f32 =
-                        (0..3).map(|c| (colors[i][c] - centre[c]).powi(2)).sum();
+                    let distance_squared: f32 = (0..3)
+                        .map(|c| (colors[i][c] - colors[centre][c]).powi(2))
+                        .sum();
                     samples.push((depth[i], spatial * (distance_squared * falloff).exp()));
                 }
                 *out = weighted_median(&mut samples);
+            }
+        });
+    out
+}
+
+fn window_extreme(
+    values: &[f32],
+    width: usize,
+    height: usize,
+    stride: usize,
+    pick: fn(f32, f32) -> f32,
+) -> Vec<f32> {
+    let rows = extreme_rows(values, width, stride, pick);
+    let columns = extreme_rows(&transpose(&rows, width, height), height, stride, pick);
+    transpose(&columns, height, width)
+}
+
+fn extreme_rows(
+    values: &[f32],
+    width: usize,
+    stride: usize,
+    pick: fn(f32, f32) -> f32,
+) -> Vec<f32> {
+    let reach = (MEDIAN_TAP_RADIUS * stride) as isize;
+    let mut out = vec![0.0f32; values.len()];
+    out.par_chunks_mut(width)
+        .zip(values.par_chunks(width))
+        .for_each(|(out_row, row)| {
+            for (x, out) in out_row.iter_mut().enumerate() {
+                *out = (-reach..=reach)
+                    .step_by(stride)
+                    .map(|dx| x as isize + dx)
+                    .filter(|&sx| sx >= 0 && sx < width as isize)
+                    .map(|sx| row[sx as usize])
+                    .fold(row[x], pick);
             }
         });
     out
