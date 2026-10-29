@@ -38,9 +38,9 @@ struct Cli {
 	#[arg(short, long)]
 	model: Option<String>,
 
-	/// Maximum disparity in pixels (higher = more 3D depth)
-	#[arg(long, default_value = "30")]
-	max_disparity: u32,
+	/// Maximum disparity in pixels (higher = more 3D depth). Default: 1.2% of image width
+	#[arg(long)]
+	max_disparity: Option<u32>,
 
 	/// Output types (comma-separated): depth, depth:avif,png,png16, sbs, tab, sep, spatial
 	#[arg(long, default_value = "spatial")]
@@ -436,7 +436,7 @@ async fn process_file(
 				let (left, right) = generate_stereo_pair_with_progress(
 					&input_image,
 					dm,
-					config.max_disparity,
+					config.max_disparity_px(input_image.width()),
 					spatial_maker::stereo::EdgeRefinement::for_photo(),
 					Some(move |progress| {
 						let _ = tx_clone.send(TuiEvent::StageUpdate {
