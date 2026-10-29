@@ -471,6 +471,7 @@ async fn process_file(
 						quality: heic_quality,
 						keep_layout_image: has_layout,
 						disparity_adjustment: comfort_disparity_adjustment(max_disparity, input_image.width()),
+						horizontal_fov_degrees: spatial_maker::fov::horizontal_fov_for_photo(input, input_image.width(), input_image.height()),
 					}),
 				};
 

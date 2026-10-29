@@ -1,4 +1,5 @@
 use crate::error::{SpatialError, SpatialResult};
+use crate::fov::DEFAULT_HORIZONTAL_FOV_DEGREES;
 use image::DynamicImage;
 use ndarray::Array2;
 use std::path::{Path, PathBuf};
@@ -406,6 +407,7 @@ pub struct SpatialPhotoConfig {
     pub quality: u8,
     pub keep_layout_image: bool,
     pub disparity_adjustment: f64,
+    pub horizontal_fov_degrees: f64,
 }
 
 impl Default for SpatialPhotoConfig {
@@ -414,6 +416,7 @@ impl Default for SpatialPhotoConfig {
             quality: DEFAULT_HEIC_QUALITY,
             keep_layout_image: false,
             disparity_adjustment: 0.0,
+            horizontal_fov_degrees: DEFAULT_HORIZONTAL_FOV_DEGREES,
         }
     }
 }
@@ -482,7 +485,7 @@ pub fn save_stereo_image(
     }
 
     if let Some(config) = options.spatial_photo {
-        save_spatial_photo(left, right, &spatial_photo_path(output_path), config.quality, config.disparity_adjustment)?;
+        save_spatial_photo(left, right, &spatial_photo_path(output_path), config.quality, config.horizontal_fov_degrees, config.disparity_adjustment)?;
     }
 
     Ok(())
@@ -498,12 +501,13 @@ fn save_spatial_photo(
     right: &DynamicImage,
     path: &Path,
     quality: u8,
+    horizontal_fov_degrees: f64,
     disparity_adjustment: f64,
 ) -> SpatialResult<()> {
     use crate::spatial_photo::write_spatial_photo;
     use crate::spatial_video::SpatialMetadata;
 
-    let metadata = SpatialMetadata { disparity_adjustment, ..SpatialMetadata::default() };
+    let metadata = SpatialMetadata { horizontal_fov_degrees, disparity_adjustment, ..SpatialMetadata::default() };
     write_spatial_photo(path, left, right, quality, &metadata)
 }
 
@@ -513,6 +517,7 @@ fn save_spatial_photo(
     _right: &DynamicImage,
     path: &Path,
     _quality: u8,
+    _horizontal_fov_degrees: f64,
     _disparity_adjustment: f64,
 ) -> SpatialResult<()> {
     Err(SpatialError::ConfigError(format!(

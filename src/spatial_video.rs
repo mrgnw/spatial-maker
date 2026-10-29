@@ -1,4 +1,5 @@
 use crate::error::{SpatialError, SpatialResult};
+use crate::fov::DEFAULT_HORIZONTAL_FOV_DEGREES;
 use image::DynamicImage;
 use std::ffi::{c_void, CString};
 use std::os::raw::c_char;
@@ -29,7 +30,7 @@ impl Default for SpatialMetadata {
     fn default() -> Self {
         Self {
             baseline_mm: 65.0,
-            horizontal_fov_degrees: 90.0,
+            horizontal_fov_degrees: DEFAULT_HORIZONTAL_FOV_DEGREES,
             disparity_adjustment: 0.0,
         }
     }
