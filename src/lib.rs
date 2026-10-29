@@ -5,6 +5,7 @@ pub mod error;
 pub mod image_loader;
 pub mod model;
 pub mod output;
+pub mod fov;
 pub mod stereo;
 pub mod video;
 
@@ -227,6 +228,7 @@ pub async fn process_photo(
 		let stereo_path = parent.join(format!("{}-spatial.{}", stem, stereo_ext));
 		let mut output_options = output_options;
 		if let Some(photo) = output_options.spatial_photo.as_mut() {
+			photo.horizontal_fov_degrees = fov::horizontal_fov_for_photo(input_path, input_image.width(), input_image.height());
 			photo.disparity_adjustment = comfort_disparity_adjustment(max_disparity, input_image.width());
 		}
 		let spatial_photo = output_options.spatial_photo.clone();
