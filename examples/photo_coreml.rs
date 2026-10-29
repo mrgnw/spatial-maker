@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let depth_time = start.elapsed();
     eprintln!("Depth estimation: {:?}", depth_time);
 
-    let (left, right) = generate_stereo_pair(&input_image, &depth_map, args.max_disparity)?;
+    let (left, right) = generate_stereo_pair(&input_image, &depth_map, args.max_disparity, spatial_maker::stereo::EdgeRefinement::for_photo())?;
 
     let sbs = output::create_sbs_image(&left, &right);
     sbs.save(&args.output)?;

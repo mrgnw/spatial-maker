@@ -208,7 +208,7 @@ pub async fn process_photo(
 			SpatialError::ConfigError("Depth map required for stereo but not available".to_string())
 		})?;
 		let input_image = load_image(input_path).await?;
-		let (left, right) = generate_stereo_pair(&input_image, dm, config.max_disparity)?;
+		let (left, right) = generate_stereo_pair(&input_image, dm, config.max_disparity, stereo::EdgeRefinement::for_photo())?;
 		let src_ext = input_path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
 		let stereo_ext = match src_ext.as_str() {
 			"heic" | "heif" | "avif" | "jxl" => "jpg",

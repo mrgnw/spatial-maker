@@ -1,7 +1,7 @@
 use crate::depth_filter::DepthProcessor;
 use crate::error::{SpatialError, SpatialResult};
 use crate::output::{needs_depth, needs_stereo, OutputType};
-use crate::stereo::generate_stereo_pair;
+use crate::stereo::{generate_stereo_pair, EdgeRefinement};
 use crate::{NormalizeMode, SpatialConfig};
 use image::{DynamicImage, RgbImage};
 use ndarray::Array2;
@@ -645,7 +645,7 @@ pub async fn process_video(
 		}
 
 		if let Some(ref stereo_tx) = stereo_tx_opt {
-			let (left, right) = generate_stereo_pair(&frame, &depth_map, config.max_disparity)?;
+			let (left, right) = generate_stereo_pair(&frame, &depth_map, config.max_disparity, EdgeRefinement::for_video())?;
 			if stereo_tx.send((left, right)).await.is_err() {
 				break;
 			}
