@@ -23,4 +23,4 @@ Verified: all copies byte-compared before deleting the originals; `depth_bench.p
 ## Open
 
 - `depth_pro.pt` (1.8G) is unused by any code. Kept on r0.
-- `spatial-maker-rust/examples/outputs` (454M) and `target/` (441M) are still on the internal disk. Not weights.
+- `spatial-maker-rust/` (old nested repo, no remote) moved to `/Volumes/wd/archive/spatial-maker-rust` on 2026-10-29.
