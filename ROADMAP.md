@@ -4,29 +4,28 @@ spatial-maker is a Rust and Swift tool that converts photos and videos to spatia
 
 ## Quality of the 3D output
 
-- [#23](https://github.com/mrgnw/spatial-maker/issues/23) Vertically coherent fill for wide disocclusion holes
-- [#42](https://github.com/mrgnw/spatial-maker/issues/42) Property tests for the stereo renderer
-- [#44](https://github.com/mrgnw/spatial-maker/issues/44) Verify command that reads back stereo HEIC and MV-HEVC output
+- [#1](https://github.com/mrgnw/spatial-maker/issues/1) Vertically coherent fill for wide disocclusion holes
+- [#8](https://github.com/mrgnw/spatial-maker/issues/8) Property tests for the stereo renderer
+- [#10](https://github.com/mrgnw/spatial-maker/issues/10) Verify command that reads back stereo HEIC and MV-HEVC output
 
 ## Testing and CI
 
-- [#37](https://github.com/mrgnw/spatial-maker/issues/37) Build and test on macOS for every push and pull request
-- [#38](https://github.com/mrgnw/spatial-maker/issues/38) rustfmt and clippy gates
-- [#40](https://github.com/mrgnw/spatial-maker/issues/40) Injectable depth source so the pipeline runs without a model
-- [#41](https://github.com/mrgnw/spatial-maker/issues/41) End-to-end video test on a generated clip
-- [#48](https://github.com/mrgnw/spatial-maker/issues/48) Build and test the library on Linux
+- [#4](https://github.com/mrgnw/spatial-maker/issues/4) rustfmt and clippy gates
+- [#6](https://github.com/mrgnw/spatial-maker/issues/6) Injectable depth source so the pipeline runs without a model
+- [#7](https://github.com/mrgnw/spatial-maker/issues/7) End-to-end video test on a generated clip
+- [#14](https://github.com/mrgnw/spatial-maker/issues/14) Build and test the library on Linux
 
 ## Usability and releases
 
-- [#39](https://github.com/mrgnw/spatial-maker/issues/39) Release workflow with a macOS tarball, crates.io refresh
-- [#43](https://github.com/mrgnw/spatial-maker/issues/43) Directory input and skipping finished outputs
-- [#45](https://github.com/mrgnw/spatial-maker/issues/45) Checksummed, resumable model downloads
+- [#5](https://github.com/mrgnw/spatial-maker/issues/5) Release workflow with a macOS tarball, crates.io refresh
+- [#9](https://github.com/mrgnw/spatial-maker/issues/9) Directory input and skipping finished outputs
+- [#11](https://github.com/mrgnw/spatial-maker/issues/11) Checksummed, resumable model downloads
 
 ## Docs
 
-- [#46](https://github.com/mrgnw/spatial-maker/issues/46) One architecture page, remove stale notes
-- [#47](https://github.com/mrgnw/spatial-maker/issues/47) README gallery on freely licensed photos
+- [#12](https://github.com/mrgnw/spatial-maker/issues/12) One architecture page, remove stale notes
+- [#13](https://github.com/mrgnw/spatial-maker/issues/13) README gallery on freely licensed photos
 
 ## Known unknowns
 
-- Nothing has been checked on a Vision Pro yet; [#31](https://github.com/mrgnw/spatial-maker/issues/31) tracks what shipped in v0.7.0 and what is still open.
+- Nothing has been checked on a Vision Pro yet; [#2](https://github.com/mrgnw/spatial-maker/issues/2) tracks what shipped in v0.7.0 and what is still open.
