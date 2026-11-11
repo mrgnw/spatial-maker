@@ -1,136 +1,104 @@
-# Spatial Video Maker
+# spatial-maker
 
-Convert 2D videos to stereoscopic 3D spatial videos for Apple Vision Pro using AI depth estimation. Runs locally on macOS with Apple Silicon Metal acceleration.
+Turn ordinary photos and videos into spatial 3D for Apple Vision Pro. It estimates a depth map for each frame, renders a second eye with depth-image-based rendering (DIBR) and writes the result as a spatial HEIC photo or an MV-HEVC video.
 
-## Installation
+The work in this repository is the media pipeline: stereo rendering and hole filling, edge refinement, temporal smoothing of video depth, and native HEIC and MV-HEVC writers in Swift. Depth comes from pretrained, off-the-shelf models that run locally through Apple's CoreML. This project uses those models; it does not train, tune or serve them.
 
-```bash
-uv tool install spatial-maker
+## Who it is for
+
+People with a Vision Pro (or any spatial-photo viewer) who want their existing photos and clips in 3D without a cloud service, and Rust developers who want a library for 2D-to-stereo conversion.
+
+## Built with
+
+- Rust: CLI, library, photo and video pipeline
+- Swift bridge: CoreML, ImageIO (stereo HEIC), AVFoundation and VideoToolbox (MV-HEVC)
+- Pretrained depth models: [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2), Depth Anything 3, Video Depth Anything
+- ffmpeg for frame extraction and audio
+
+## Requirements
+
+- macOS 14+ on Apple Silicon
+- Xcode Command Line Tools (the build compiles the Swift bridge)
+- Rust 1.75+
+- ffmpeg, for video
+
+```sh
+xcode-select --install
+brew install ffmpeg rust
 ```
 
-### Requirements
+## Install and run
 
-- macOS 14+ with Apple Silicon (Metal acceleration; spatial photos and video are encoded natively)
-- [ffmpeg](https://ffmpeg.org/) with VideoToolbox support
-
-```bash
-brew install ffmpeg
-```
-
-### Model Checkpoints
-
-Download Depth Anything V2 checkpoints:
-
-```bash
-mkdir -p ~/.spatial-maker/checkpoints
-
-# Small (fastest, 24.8M params)
-curl -L -o ~/.spatial-maker/checkpoints/depth_anything_v2_vits.pth \
-  https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth
-
-# Base (balanced, 97.5M params)
-curl -L -o ~/.spatial-maker/checkpoints/depth_anything_v2_vitb.pth \
-  https://huggingface.co/depth-anything/Depth-Anything-V2-Base/resolve/main/depth_anything_v2_vitb.pth
-
-# Large (best quality, 335.3M params)
-curl -L -o ~/.spatial-maker/checkpoints/depth_anything_v2_vitl.pth \
-  https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vitl.pth
-```
-
-You only need the model sizes you plan to use. `vits` (small) is a good default.
-
-| Model | Params | License |
-|-|-|-|
-| Depth Anything V2 Small | 24.8M | Apache-2.0 |
-| Depth Anything V2 Base | 97.5M | CC BY-NC 4.0 (non-commercial) |
-| Depth Anything V2 Large | 335.3M | CC BY-NC 4.0 (non-commercial) |
-| Depth Anything 3 Mono Large | 0.35B | Apache-2.0 |
-
-The CLI downloads CoreML models on first use. Photos default to Depth Anything 3 Mono Large (`-m da3`) for cleaner edges on thin detail; videos default to V2 Small (`-m s`) for speed.
-
-spatial-maker is MIT-licensed, but the Base and Large V2 weights are not: don't use them for commercial work.
-
-## Usage
-
-```bash
-# Single file
-spatial-maker video.mp4
-
-# Specify output path
-spatial-maker video.mp4 -o output_spatial.mov
-
-# Process all videos in a folder
-spatial-maker /path/to/videos/
-```
-
-### Options
-
-```bash
-# Depth model size: vits (fast), vitb (balanced), vitl (best)
-spatial-maker video.mp4 --encoder vitl
-
-# 3D intensity in pixels (20-50 recommended)
-spatial-maker video.mp4 --max-disparity 40
-
-# Process only first 10 seconds (for testing)
-spatial-maker video.mp4 --duration 10
-
-# Skip downscaling (if input is already 1080p@24fps)
-spatial-maker video.mp4 --skip-downscale
-
-# Keep intermediate files
-spatial-maker video.mp4 --keep-intermediate
-
-# JSON progress output (for GUI integration)
-spatial-maker video.mp4 --json-progress
-```
-
-## Pipeline
-
-```
-Input 2D Video
-    |
-[Downscale to 1080p @ 24fps]
-    |
-[Depth estimation + stereo pair creation (Depth Anything V2 + DIBR)]
-    |
-[Audio extraction + muxing]
-    |
-[MV-HEVC spatial video via AVFoundation]
-    |
-Spatial Video (.mov)
-```
-
-## Parameters
-
-| Parameter | Description | Recommended |
-|-----------|-------------|-------------|
-| `--encoder` | Depth model size (vits/vitb/vitl) | `vits` for speed, `vitl` for quality |
-| `--max-disparity` | 3D intensity in pixels | default 1.2% of image width (30 at 2500 px); absolute override |
-| `--duration` | Limit processing time (seconds) | Use for testing |
-| `--skip-downscale` | Keep original resolution | Only if already 1080p |
-| `--json-progress` | Emit JSON progress to stdout | For GUI integration |
-
-### 3D Intensity Guide
-
-- **20-30**: Subtle, comfortable for long viewing
-- **30-40**: Moderate, good balance
-- **40-50**: Strong, more immersive
-
-## Development
-
-```bash
+```sh
 git clone https://github.com/mrgnw/spatial-maker.git
 cd spatial-maker
-uv sync
-uv run spatial-maker video.mp4
+cargo build --release
 ```
+
+Set the input, then run the line unchanged. Models download on first use.
+
+```sh
+INPUT=$HOME/Pictures/photo.jpg
+./target/release/spatial-maker "$INPUT"
+```
+
+```sh
+INPUT=$HOME/Movies/clip.mp4
+OUTPUT=$HOME/Movies/clip_spatial.mov
+./target/release/spatial-maker "$INPUT" -o "$OUTPUT" -m vda
+```
+
+Run the tests:
+
+```sh
+cargo test
+```
+
+## Options
+
+| Flag | Meaning |
+|-|-|
+| `-m s`, `b`, `l`, `da3`, `vda` | Depth model. Photos default to `da3`, videos to `s` |
+| `--max-disparity` | 3D strength in pixels. Default is 1.2% of image width |
+| `--output-types` | `spatial` (default), `sbs`, `tab`, `sep`, `depth` |
+| `--heic-quality` | Spatial photo quality, default 80 |
+| `--temporal-alpha` | Video depth smoothing, default 0.7 |
+
+Full list:
+
+```sh
+./target/release/spatial-maker --help
+```
+
+## Library
+
+```toml
+[dependencies]
+spatial-maker = { git = "https://github.com/mrgnw/spatial-maker" }
+```
+
+See `examples/` for runnable photo and stereo-from-depth programs.
+
+## Models and licenses
+
+spatial-maker is MIT. The depth models have their own terms:
+
+| Model | License |
+|-|-|
+| Depth Anything V2 Small (`s`) | Apache-2.0 |
+| Depth Anything V2 Base and Large (`b`, `l`) | CC BY-NC 4.0, non-commercial |
+| Depth Anything 3 Mono Large (`da3`) | Apache-2.0 |
+| Video Depth Anything Small (`vda`) | Apache-2.0 |
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) and the [open issues](https://github.com/mrgnw/spatial-maker/issues).
 
 ## Acknowledgments
 
-- [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) by Yang et al.
-- [spatial](https://blog.mikeswanson.com/spatial_docs/) by Mike Swanson
+- [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2)
+- [Mike Swanson's spatial](https://blog.mikeswanson.com/spatial_docs/) for MV-HEVC groundwork
 
 ## License
 
-MIT
+[MIT](LICENSE)
