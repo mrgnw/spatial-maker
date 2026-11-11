@@ -21,7 +21,7 @@ The model code comes from a checkout of https://github.com/ByteDance-Seed/Depth-
 (its package pulls xformers/open3d/gsplat, which the depth path does not need).
 
 Usage:
-	DA3_SRC=~/Movies/cache/spatial-maker/src/da3 uv run scripts/coreml_conversion/convert_da3_to_coreml.py [mono-large] [metric-large] [small] [base]
+	DA3_SRC=$HOME/.cache/spatial-maker/src/da3 uv run scripts/coreml_conversion/convert_da3_to_coreml.py [mono-large] [metric-large] [small] [base]
 """
 
 import os

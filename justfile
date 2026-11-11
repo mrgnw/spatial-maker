@@ -11,10 +11,6 @@ build:
 build-release:
 	cargo build --release
 
-# Build with temporary target dir, then clean that target on success
-build-release-clean:
-	DEVCLEAN_RUST_TARGET_BASE="${DEVCLEAN_RUST_TARGET_BASE:-~/Movies/cache/rust-targets}" ../scripts/rust-build-clean . --release
-
 # Build release archives for macOS targets
 # Uses a temporary target dir and removes it after successful packaging.
 dist:
@@ -25,7 +21,7 @@ dist:
 	targets=(
 		aarch64-apple-darwin
 	)
-	target_base="${DEVCLEAN_RUST_TARGET_BASE:-~/Movies/cache/rust-targets}"
+	target_base="${DEVCLEAN_RUST_TARGET_BASE:-${TMPDIR:-/tmp}/spatial-maker-targets}"
 	target_dir="${target_base}/spatial-maker-dist"
 	echo "building ${bin} {{tag}}"
 	echo

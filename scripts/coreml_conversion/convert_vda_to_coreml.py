@@ -24,7 +24,7 @@ hidden states. The caller keeps the window (see StreamWindow below and swift-bri
 The model code comes from a checkout of https://github.com/DepthAnything/Video-Depth-Anything.
 
 Usage:
-	VDA_SRC=~/Movies/cache/spatial-maker/src/vda VDA_FRAMES=~/Movies/cache/spatial-maker/upgrades/frames \
+	VDA_SRC=$HOME/.cache/spatial-maker/src/vda VDA_FRAMES=$HOME/.cache/spatial-maker/upgrades/frames \
 		uv run scripts/coreml_conversion/convert_vda_to_coreml.py
 """
 
