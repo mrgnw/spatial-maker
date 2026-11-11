@@ -9,5 +9,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
+      - run: brew install ffmpeg
       - run: cargo build --release
       - run: cargo test
