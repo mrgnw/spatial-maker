@@ -4,7 +4,7 @@ spatial-maker is a Rust and Swift tool that converts photos and videos to spatia
 
 ## Quality of the 3D output
 
-- [#1](https://github.com/mrgnw/spatial-maker/issues/1) Vertically coherent fill for wide disocclusion holes
+- [#1](https://github.com/mrgnw/spatial-maker/issues/1) Fill for holes wider than the existing vertical smoothing handles
 - [#8](https://github.com/mrgnw/spatial-maker/issues/8) Property tests for the stereo renderer
 - [#10](https://github.com/mrgnw/spatial-maker/issues/10) Verify command that reads back stereo HEIC and MV-HEVC output
 
@@ -28,4 +28,4 @@ spatial-maker is a Rust and Swift tool that converts photos and videos to spatia
 
 ## Known unknowns
 
-- Nothing has been checked on a Vision Pro yet; [#2](https://github.com/mrgnw/spatial-maker/issues/2) tracks what shipped in v0.7.0 and what is still open.
+- Nothing has been checked on a Vision Pro yet; [#2](https://github.com/mrgnw/spatial-maker/issues/2) tracks the open items left after v0.8.0 (Vision Pro check, the `vda` model download, fur edges).
