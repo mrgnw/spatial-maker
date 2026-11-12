@@ -68,7 +68,7 @@ For 24fps video (1 minute = 1440 frames):
 - **ONNX CPU**: 430ms × 1440 = ~10 minutes
 - **CoreML Base**: 128ms × 1440 = **~3 minutes** ⚡
 
-Still **faster than real-time** for video processing!
+That is about 3x **slower** than real-time: 128 ms per frame is ~7.8 frames/s against 24 frames/s, so one minute of video takes about three minutes.
 
 ## Next Steps
 
@@ -81,7 +81,7 @@ Still **faster than real-time** for video processing!
 
 ✅ CoreML integration successful  
 ✅ 3.4x speedup over ONNX CPU  
-✅ Fast enough for real-time-ish video processing  
+✅ Fast enough for offline video processing (about 3 minutes per minute of 24 fps video, not real-time)  
 ✅ Using Apple's hardware acceleration (ANE + GPU + CPU)
 
 The Swift bridge works perfectly. Next: video pipeline!

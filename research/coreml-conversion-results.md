@@ -87,4 +87,4 @@ For commercial spatial video products, use Small. An earlier version of this not
 **For maximum quality (batch/offline):**
 - Use **Large** — best quality, slower but fine for non-real-time use
 
-The Base model hits the sweet spot for spatial-maker: significantly better quality than Small, but still fast enough to process 24fps video faster than real-time on M4 Pro.
+The Base model hits the sweet spot for spatial-maker: significantly better quality than Small, but but at ~128 ms per frame (~7.8 frames/s) it processes 24fps video at about one third of real-time speed.

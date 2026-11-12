@@ -76,7 +76,7 @@ Comprehensive research on depth estimation for Apple Silicon:
 
 **Target (CoreML Small):**
 - Photo: 30ms (14x faster)
-- Video (60s @ 24fps): ~1 minute processing time (faster than real-time!)
+- Video (60s @ 24fps): ~1 minute processing time (a projection from ~30 ms per frame, never measured end to end)
 
 **Target (CoreML Base):**
 - Photo: 60-90ms (better quality, still 5-7x faster than ONNX)
