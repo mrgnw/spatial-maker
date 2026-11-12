@@ -10,7 +10,7 @@ repository = "https://github.com/mrgnw/spatial-maker"
 homepage = "https://github.com/mrgnw/spatial-maker"
 documentation = "https://github.com/mrgnw/spatial-maker#readme"
 readme = "README.md"
-rust-version = "1.75"
+rust-version = "1.88"
 exclude = [
 	"test_*.jpg",
 	"*.py",
