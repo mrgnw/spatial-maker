@@ -81,7 +81,7 @@ See `examples/` for runnable photo and stereo-from-depth programs.
 
 ## Models and licenses
 
-spatial-maker is MIT. The depth models have their own terms:
+spatial-maker is MIT. The depth models have their own terms, taken from the upstream model cards and repositories ([Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2#license), [Video Depth Anything](https://github.com/DepthAnything/Video-Depth-Anything#license), [DA3MONO-LARGE](https://huggingface.co/depth-anything/DA3MONO-LARGE)):
 
 | Model | License |
 |-|-|
@@ -89,6 +89,16 @@ spatial-maker is MIT. The depth models have their own terms:
 | Depth Anything V2 Base and Large (`b`, `l`) | CC BY-NC 4.0, non-commercial |
 | Depth Anything 3 Mono Large (`da3`) | Apache-2.0 |
 | Video Depth Anything Small (`vda`) | Apache-2.0 |
+
+The MIT license covers this repository's code only. It does not relicense any model weights.
+
+Where the weights come from:
+
+- This repository contains no model weights, and the release tarballs contain only the `spatial-maker` binary.
+- Weights are downloaded at runtime, on first use, by the tool running on your machine.
+- The downloaded files are CoreML conversions that the author hosts on Hugging Face: [mrgnw/depth-anything-v2-coreml](https://huggingface.co/mrgnw/depth-anything-v2-coreml) (V2 Small, Base, Large) and [mrgnw/depth-anything-v3-coreml](https://huggingface.co/mrgnw/depth-anything-v3-coreml) (DA3 Mono Large). They are redistributed there, outside this repository. The conversion scripts are in `scripts/coreml_conversion/`.
+- The `vda` download points at `mrgnw/video-depth-anything-coreml`, which is not publicly available yet, so `-m vda` only works if you already have that model locally.
+- Base and Large are non-commercial: check that your use fits CC BY-NC 4.0 before choosing `-m b` or `-m l`.
 
 ## Roadmap
 
