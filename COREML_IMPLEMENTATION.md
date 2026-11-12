@@ -67,7 +67,7 @@ For 60 seconds @ 24fps (1440 frames):
 - **ONNX CPU**: 430ms × 1440 = ~10 minutes
 - **CoreML Base**: 128ms × 1440 = **~3 minutes**
 
-Still faster than real-time!
+That is about 3x slower than real-time (128 ms per frame is ~7.8 frames/s against 24 frames/s). Depth inference only; Neural Engine, GPU and CPU timings were measured once on one machine.
 
 ## Implementation Details
 
