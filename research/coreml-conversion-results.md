@@ -71,10 +71,10 @@ scripts/coreml_conversion/
 
 ## License Notes
 
-- **Small & Base**: Apache-2.0 (commercial use OK)
-- **Large**: CC-BY-NC-4.0 (non-commercial only)
+- **Small**: Apache-2.0 (commercial use OK)
+- **Base & Large**: CC-BY-NC-4.0 (non-commercial only)
 
-For commercial spatial video products, use Small or Base.
+For commercial spatial video products, use Small. An earlier version of this note listed Base as Apache-2.0; that was wrong. Source: the [Depth Anything V2 license section](https://github.com/DepthAnything/Depth-Anything-V2#license).
 
 ## Quality vs Speed Trade-off
 
