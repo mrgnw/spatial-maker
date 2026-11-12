@@ -19,7 +19,7 @@ People with a Vision Pro (or any spatial-photo viewer) who want their existing p
 
 - macOS 14+ on Apple Silicon
 - Xcode Command Line Tools (the build compiles the Swift bridge)
-- Rust 1.75+
+- Rust 1.88+ (the highest minimum among locked dependencies; not tested on older toolchains)
 - ffmpeg, for video
 
 ```sh
