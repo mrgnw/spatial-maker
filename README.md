@@ -35,7 +35,7 @@ cd spatial-maker
 cargo build --release
 ```
 
-Set the input, then run the line unchanged. Models download on first use.
+Set the input, then run the line unchanged. Models download on first use (about 48 MB for the default video model, 638 MB for the default photo model).
 
 ```sh
 INPUT=$HOME/Pictures/photo.jpg
@@ -45,8 +45,10 @@ INPUT=$HOME/Pictures/photo.jpg
 ```sh
 INPUT=$HOME/Movies/clip.mp4
 OUTPUT=$HOME/Movies/clip_spatial.mov
-./target/release/spatial-maker "$INPUT" -o "$OUTPUT" -m vda
+./target/release/spatial-maker "$INPUT" -o "$OUTPUT"
 ```
+
+Videos use `-m s` by default. `-m vda` (steadier video depth) needs a model that is not publicly downloadable yet; see Models and licenses.
 
 Run the tests:
 
