@@ -11,12 +11,12 @@ Convert ordinary photos and videos into spatial HEIC photos and MV-HEVC video fo
 [![macOS / Apple Silicon](https://img.shields.io/badge/platform-macOS%20%2F%20Apple%20Silicon-555?style=flat)](#requirements)
 [![crates.io](https://img.shields.io/crates/v/spatial-maker?style=flat)](https://crates.io/crates/spatial-maker)
 
+![A coffee cup inside a framed box; as the viewpoint sways, the cup shifts against the table behind it](docs/media/hero-3d.gif)
+
+A photo in a box, seen from a moving viewpoint. The depth map comes from spatial-maker; the box effect is a web demo, not the Vision Pro rendering. [MP4](docs/media/hero-3d.mp4) · [depth map](docs/media/coffee-depth.png) · [how it was made](docs/media/README.md#3d-box-hero).
+
 > [!NOTE]
 > This project was built with heavy LLM assistance and should be considered proof-of-concept. Contributions are welcome, but I can't guarantee the accuracy of the code or that I will continue to maintain it. If there are any mistakes in attribution or anything else, please let me know.
-
-![Before and after: a coffee photo beside a red–cyan preview of the converted stereo pair](docs/media/hero.png)
-
-No headset needed to inspect the [side-by-side image](docs/media/coffee-sbs.png). For the anaglyph above, use red–cyan glasses (red on the left). You can also download the [spatial HEIC](docs/media/coffee-spatial.heic). Photo: Rachel Michetti, CC0, courtesy of Pikolo Espresso Bar via scikit-image. [Source, exact commands, and preview details](docs/media/README.md).
 
 ![Terminal recording of a real photo conversion with the Small model](docs/media/conversion.gif)
 
@@ -38,6 +38,14 @@ The work in this repository is the media pipeline: stereo rendering and hole fil
 ## Who it is for
 
 People with a Vision Pro (or any spatial-photo viewer) who want their existing photos and clips in 3D without a cloud service, and Rust developers who want a library for 2D-to-stereo conversion.
+
+## Check it in your headset
+
+The hero above only simulates depth on a flat screen. The real output is a stereo pair: download the [spatial HEIC](docs/media/coffee-spatial.heic) and open it on a spatial-photo viewer.
+
+![Before and after: a coffee photo beside a red–cyan preview of the converted stereo pair](docs/media/hero.png)
+
+No headset needed to inspect the [side-by-side image](docs/media/coffee-sbs.png). For the anaglyph above, use red–cyan glasses (red on the left). Photo: Rachel Michetti, CC0, courtesy of Pikolo Espresso Bar via scikit-image. [Source, exact commands, and preview details](docs/media/README.md).
 
 ## Built with
 
