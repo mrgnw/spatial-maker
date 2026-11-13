@@ -43,4 +43,18 @@ OUTPUT=/tmp/spatial-demo/coffee-anaglyph.png
 ffmpeg -i "$INPUT" -vf stereo3d=sbsl:arcc -frames:v 1 -y "$OUTPUT"
 ```
 
-`social-preview.png` is a 1280 × 640 composition of the same original and anaglyph, with project title and format labels. The owner can upload it under repository **Settings → General → Social preview**. These preview layouts were rasterized from SVG with resvg; no generated or retouched stereo result was substituted.
+`hero.png` was rasterized from SVG with resvg; no generated or retouched stereo result was substituted.
+
+## 3D box hero
+
+`coffee-depth.png` is the real depth output of the v0.8.0 release binary with Depth Anything V2 Small. White is near:
+
+```sh
+spatial-maker coffee.png -m s --output-types depth:png --force
+```
+
+`hero-3d.gif` (800 × 540, 20 fps) and `hero-3d.mp4` (800 × 540, 25 fps) are a 7-second seamless loop. A WebGL parallax renderer from a separate, unpublished web component displaces `coffee.png` by `coffee-depth.png` inside a framed box. A scripted figure-eight viewpoint drives it, and the box tilts up to 5° with the viewpoint. Frames were captured with Playwright in headless Chromium and assembled with ffmpeg and gifski. The renderer is not part of this repository.
+
+This is a flat-screen simulation of depth. It is not how a Vision Pro displays the spatial HEIC, and it uses no second eye or hole filling from spatial-maker; edges where the cup stretches over the table are the renderer's, not the stereo output's.
+
+`social-preview.png` is a 1280 × 640 card with one off-axis frame from the same renderer and the project title in a separate column. The owner can upload it under repository **Settings → General → Social preview**.
