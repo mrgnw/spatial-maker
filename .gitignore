@@ -1,6 +1,7 @@
 # Media files
 *.mp4
 *.mov
+!docs/media/*.mp4
 *.MOV
 *.avi
 *.mkv
