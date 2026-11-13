@@ -22,11 +22,7 @@ This writes `/tmp/spatial-demo/coffee-spatial.png` and `/tmp/spatial-demo/coffee
 
 ## Terminal recording
 
-`conversion.cast` is an unedited asciinema recording of the release binary, captured on an Apple Silicon Mac in `/tmp/spatial-demo` with the prompt set to `$ `. The model had already downloaded. The recorded conversion uses `--force` to regenerate depth; it does not reuse a saved depth map.
-
-```sh
-spatial-maker --version
-```
+`conversion.cast` is an unedited asciinema recording of the release binary, captured on an Apple Silicon Mac in `/tmp/spatial-demo` with a neutral `$ ` prompt. The capture script displays the command below, clears the screen for the terminal interface, and executes that exact command. The model had already downloaded. The recorded conversion uses `--force` to regenerate depth; it does not reuse a saved depth map.
 
 ```sh
 spatial-maker coffee.png -m s --output-types spatial,sbs --force
