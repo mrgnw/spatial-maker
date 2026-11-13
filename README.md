@@ -1,6 +1,37 @@
 # spatial-maker
 
-Turn ordinary photos and videos into spatial 3D for Apple Vision Pro. It estimates a depth map for each frame, renders a second eye with depth-image-based rendering (DIBR) and writes the result as a spatial HEIC photo or an MV-HEVC video.
+Convert ordinary photos and videos into spatial HEIC photos and MV-HEVC video for Apple Vision Pro, locally on your Mac.
+
+[![CI](https://img.shields.io/github/actions/workflow/status/mrgnw/spatial-maker/ci.yml?branch=main&style=flat&label=CI)](https://github.com/mrgnw/spatial-maker/actions/workflows/ci.yml)
+[![MIT license](https://img.shields.io/github/license/mrgnw/spatial-maker?style=flat)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/mrgnw/spatial-maker?style=flat)](https://github.com/mrgnw/spatial-maker/releases/latest)
+[![Last commit](https://img.shields.io/github/last-commit/mrgnw/spatial-maker?style=flat)](https://github.com/mrgnw/spatial-maker/commits/main)
+[![Open issues](https://img.shields.io/github/issues/mrgnw/spatial-maker?style=flat)](https://github.com/mrgnw/spatial-maker/issues)
+[![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-93450a?style=flat)](Cargo.toml)
+[![macOS / Apple Silicon](https://img.shields.io/badge/platform-macOS%20%2F%20Apple%20Silicon-555?style=flat)](#requirements)
+[![crates.io](https://img.shields.io/crates/v/spatial-maker?style=flat)](https://crates.io/crates/spatial-maker)
+
+> [!NOTE]
+> This project was built with heavy LLM assistance and should be considered proof-of-concept. Contributions are welcome, but I can't guarantee the accuracy of the code or that I will continue to maintain it. If there are any mistakes in attribution or anything else, please let me know.
+
+![Before and after: a coffee photo beside a red–cyan preview of the converted stereo pair](docs/media/hero.png)
+
+No headset needed to inspect the [side-by-side image](docs/media/coffee-sbs.png). For the anaglyph above, use red–cyan glasses (red on the left). You can also download the [spatial HEIC](docs/media/coffee-spatial.heic). Photo: Rachel Michetti, CC0, courtesy of Pikolo Espresso Bar via scikit-image. [Source, exact commands, and preview details](docs/media/README.md).
+
+![Terminal recording of a real photo conversion with the Small model](docs/media/conversion.gif)
+
+Real v0.8.0 conversion on Apple Silicon, with the model already downloaded and depth regenerated. Idle gaps are shortened in the GIF. [Original asciinema recording](docs/media/conversion.cast).
+
+## What it does
+
+spatial-maker estimates a depth map, renders a second eye with depth-image-based rendering (DIBR), and writes stereo media. Pretrained depth estimation is one step in the local conversion pipeline. Your photos and videos stay on your machine; the first run downloads model weights.
+
+| Input | Output |
+|-|-|
+| A 2D photo | Spatial HEIC, side-by-side, top-and-bottom, separate eyes, or a depth map |
+| A 2D video | Spatial MV-HEVC in a `.mov` container, with audio when present |
+
+Stereo is inferred from a single view. Hidden surfaces must be filled, so edges and occluded areas can show artifacts. Vision Pro playback has not yet been checked on a device; see [#2](https://github.com/mrgnw/spatial-maker/issues/2).
 
 The work in this repository is the media pipeline: stereo rendering and hole filling, edge refinement, temporal smoothing of video depth, and native HEIC and MV-HEVC writers in Swift. Depth comes from pretrained, off-the-shelf models that run locally through Apple's CoreML. This project uses those models; it does not train, tune or serve them.
 
@@ -27,34 +58,69 @@ xcode-select --install
 brew install ffmpeg rust
 ```
 
-## Install and run
+## Install
+
+| Method | What you need | Download or instructions |
+|-|-|-|
+| macOS release binary | macOS 14+, Apple Silicon; ffmpeg for video | [v0.8.0 tarball](https://github.com/mrgnw/spatial-maker/releases/download/v0.8.0/spatial-maker-v0.8.0-aarch64-apple-darwin.tar.gz) · [All releases](https://github.com/mrgnw/spatial-maker/releases) |
+| Build from Git | The above, Rust 1.88+, Xcode Command Line Tools | Use the source install below |
+
+The release archive contains the binary only. Extract it into a directory on your PATH, or run it directly from the extracted folder. Rust and Xcode Command Line Tools are needed only when building from source.
+
+### From source
 
 ```sh
-git clone https://github.com/mrgnw/spatial-maker.git
-cd spatial-maker
-cargo build --release
+cargo install --git https://github.com/mrgnw/spatial-maker --locked
 ```
 
-Set the input, then run the line unchanged. Models download on first use (about 48 MB for the default video model, 638 MB for the default photo model).
+The crates.io badge points to this owner's published package, but that package is still v0.3.2. Prefer a release binary or the Git install for the current converter.
+
+## Usage
+
+Models download on first use (about 48 MB for the default video model, 638 MB for the default photo model). Weights are cached in `$HOME/.spatial-maker/checkpoints`; `SPATIAL_MAKER_CHECKPOINTS` selects a different directory. After the weights are available, conversion runs locally without a cloud service.
+
+### Photo to spatial HEIC
+
+Set the input to your photo, then run the conversion unchanged:
 
 ```sh
-INPUT=$HOME/Pictures/photo.jpg
-./target/release/spatial-maker "$INPUT"
+INPUT="$HOME/Pictures/photo.jpg"
 ```
 
 ```sh
-INPUT=$HOME/Movies/clip.mp4
-OUTPUT=$HOME/Movies/clip_spatial.mov
-./target/release/spatial-maker "$INPUT" -o "$OUTPUT"
+spatial-maker "$INPUT"
 ```
 
-Videos use `-m s` by default. `-m vda` (steadier video depth) needs a model that is not publicly downloadable yet; see Models and licenses.
+For `photo.jpg`, the default output is `photo-da3-spatial.heic` beside the input. Choose `-m s` for the smaller 48 MB model.
 
-Run the tests:
+### Try the included photo without a headset
+
+From a source checkout, use the CC0 sample to write a spatial HEIC and a side-by-side preview:
 
 ```sh
-cargo test
+INPUT="$PWD/docs/media/coffee.png"
+OUTPUT=/tmp/spatial-demo/coffee
 ```
+
+```sh
+mkdir -p /tmp/spatial-demo
+spatial-maker "$INPUT" -o "$OUTPUT" -m s --output-types spatial,sbs
+```
+
+Open `coffee-spatial.png` in `/tmp/spatial-demo` to inspect the two eye views in an ordinary image viewer. The companion `coffee-spatial.heic` is the spatial photo. The [demo media notes](docs/media/README.md) explain the anaglyph preview.
+
+### Video to spatial MV-HEVC
+
+```sh
+INPUT="$HOME/Movies/clip.mp4"
+OUTPUT="$HOME/Movies/clip_spatial.mov"
+```
+
+```sh
+spatial-maker "$INPUT" -o "$OUTPUT"
+```
+
+Videos use `-m s` by default. `-m vda` (steadier video depth) needs a model that is not publicly downloadable yet; see [Models and licenses](#models-and-licenses).
 
 ## Options
 
@@ -69,7 +135,7 @@ cargo test
 Full list:
 
 ```sh
-./target/release/spatial-maker --help
+spatial-maker --help
 ```
 
 ## Library
@@ -105,6 +171,10 @@ Where the weights come from:
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) and the [open issues](https://github.com/mrgnw/spatial-maker/issues).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the macOS build, tests, and pull request guidance. Start with a [good first issue](https://github.com/mrgnw/spatial-maker/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22), or share a reproducible conversion problem using the issue templates.
 
 ## Acknowledgments
 
