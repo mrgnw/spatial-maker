@@ -115,7 +115,7 @@ mkdir -p /tmp/spatial-demo
 spatial-maker "$INPUT" -o "$OUTPUT" -m s --output-types spatial,sbs
 ```
 
-Open `coffee-spatial.png` in `/tmp/spatial-demo` to inspect the two eye views in an ordinary image viewer. The companion `coffee-spatial.heic` is the spatial photo. The [demo media notes](docs/media/README.md) explain the anaglyph preview.
+Open `coffee-spatial.png` in `/tmp/spatial-demo` to inspect the two eye views in an ordinary image viewer. The companion `coffee-spatial.heic` is the spatial photo. The [demo media notes](docs/media/README.md) explain how the demo images were made.
 
 ### Video to spatial MV-HEVC
 
