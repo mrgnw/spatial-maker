@@ -43,9 +43,9 @@ People with a Vision Pro (or any spatial-photo viewer) who want their existing p
 
 The hero above only simulates depth on a flat screen. The real output is a stereo pair: download the [spatial HEIC](docs/media/coffee-spatial.heic) and open it on a spatial-photo viewer.
 
-![Before and after: a coffee photo beside a red–cyan preview of the converted stereo pair](docs/media/hero.png)
+![A coffee photo beside the depth map spatial-maker estimates from it](docs/media/hero.png)
 
-No headset needed to inspect the [side-by-side image](docs/media/coffee-sbs.png). For the anaglyph above, use red–cyan glasses (red on the left). Photo: Rachel Michetti, CC0, courtesy of Pikolo Espresso Bar via scikit-image. [Source, exact commands, and preview details](docs/media/README.md).
+No headset needed to inspect the [side-by-side image](docs/media/coffee-sbs.png), the two eye views the depth map produces. Photo: Rachel Michetti, CC0, courtesy of Pikolo Espresso Bar via scikit-image. [Source, exact commands, and preview details](docs/media/README.md).
 
 ## Built with
 
