@@ -16,7 +16,6 @@ exclude = [
 	"*.py",
 	"benchmarking/",
 	"samples/",
-	"todos/",
 	"output/",
 	"checkpoints",
 	"__pycache__/",
