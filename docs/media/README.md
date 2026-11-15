@@ -30,20 +30,9 @@ spatial-maker coffee.png -m s --output-types spatial,sbs --force
 
 `conversion.gif` was rendered with agg 1.9.0 at 90 columns, 14 rows, 14 px type, GitHub dark theme, a 10 fps cap, and idle gaps limited to one second. Processing frames are real; playback compresses idle time.
 
-## Preview images
+## Depth comparison
 
-`hero.png` places the original photo beside a red–cyan anaglyph made from the actual side-by-side output. Red goes to the left eye, cyan to the right. The anaglyph is a documentation preview, not an output format of spatial-maker. It was made with ffmpeg:
-
-```sh
-INPUT="$PWD/docs/media/coffee-sbs.png"
-OUTPUT=/tmp/spatial-demo/coffee-anaglyph.png
-```
-
-```sh
-ffmpeg -i "$INPUT" -vf stereo3d=sbsl:arcc -frames:v 1 -y "$OUTPUT"
-```
-
-`hero.png` was rasterized from SVG with resvg; no generated or retouched stereo result was substituted.
+`hero.png` places `coffee.png` beside `coffee-depth.png`, the real depth output described below. White is near. It was composed as an SVG and rasterized with resvg; the depth map is unmodified.
 
 ## 3D box hero
 
